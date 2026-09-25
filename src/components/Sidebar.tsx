@@ -12,6 +12,7 @@ import {
   IconSettings,
   IconBolt,
   IconStop,
+  IconFolder,
 } from "../icons";
 import type { StageStatus } from "../types";
 
@@ -28,6 +29,7 @@ const STAGE_ICON: Record<string, (p: any) => JSX.Element> = {
 export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; onRunAll: () => void; onStopAll: () => void }) {
   const view = useStore((s) => s.view);
   const runtime = useStore((s) => s.runtime);
+  const activeProjectName = useStore((s) => s.activeProjectName);
 
   return (
     <aside className="sidebar">
@@ -83,6 +85,16 @@ export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; on
             <IconBolt size={15} /> <span className="btn-label">Run full pipeline</span>
           </button>
         )}
+        <button
+          className={"btn ghost full" + (view === "projects" ? " active" : "")}
+          style={{ marginTop: 8 }}
+          onClick={() => setView("projects")}
+          title={activeProjectName ? `Projects (current: ${activeProjectName})` : "Projects"}
+          aria-label="Projects"
+        >
+          <IconFolder size={15} />{" "}
+          <span className="btn-label">{activeProjectName ? `Project: ${activeProjectName}` : "Projects"}</span>
+        </button>
         <button
           className={"btn ghost full" + (view === "settings" ? " active" : "")}
           style={{ marginTop: 8 }}

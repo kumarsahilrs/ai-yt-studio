@@ -1,4 +1,5 @@
 import type { Provider, RunContext } from "../types";
+import { blobToDataUrl } from "../blob";
 
 // ---------------------------------------------------------------------------
 // Image providers, ordered free -> paid.
@@ -8,9 +9,8 @@ function trim(s: string, n = 300) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
-async function blobToObjectUrl(res: Response): Promise<string> {
-  const buf = await res.blob();
-  return URL.createObjectURL(buf);
+async function responseToDataUrl(res: Response): Promise<string> {
+  return blobToDataUrl(await res.blob());
 }
 
 const apiKeyField = (placeholder: string) => ({
@@ -84,7 +84,7 @@ export const imageProviders: Provider[] = [
         const raw = await res.text();
         throw new Error(`${res.status} — ${trim(raw)} (model may be cold-loading; retry in ~20s)`);
       }
-      return { url: await blobToObjectUrl(res), remote: false };
+      return { url: await responseToDataUrl(res), remote: false };
     },
   },
   {
@@ -169,7 +169,7 @@ export const imageProviders: Provider[] = [
         const raw = await res.text();
         throw new Error(`${res.status} — ${trim(raw)}`);
       }
-      return { url: await blobToObjectUrl(res), remote: false };
+      return { url: await responseToDataUrl(res), remote: false };
     },
   },
   {

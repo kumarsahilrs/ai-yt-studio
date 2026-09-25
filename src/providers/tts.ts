@@ -1,4 +1,5 @@
 import type { Provider, RunContext } from "../types";
+import { blobToDataUrl } from "../blob";
 
 // ---------------------------------------------------------------------------
 // Text-to-speech providers, ordered free -> paid.
@@ -71,7 +72,7 @@ export const ttsProviders: Provider[] = [
         );
       }
       const buf = await res.blob();
-      return { url: URL.createObjectURL(buf), playbackOnly: false };
+      return { url: await blobToDataUrl(buf), playbackOnly: false };
     },
   },
   {
@@ -110,7 +111,7 @@ export const ttsProviders: Provider[] = [
         throw new Error(`${res.status} — ${trim(raw)}`);
       }
       const buf = await res.blob();
-      return { url: URL.createObjectURL(buf), playbackOnly: false };
+      return { url: await blobToDataUrl(buf), playbackOnly: false };
     },
   },
   {
@@ -158,7 +159,7 @@ export const ttsProviders: Provider[] = [
         throw new Error(`${res.status} — ${trim(raw)}`);
       }
       const buf = await res.blob();
-      return { url: URL.createObjectURL(buf), playbackOnly: false };
+      return { url: await blobToDataUrl(buf), playbackOnly: false };
     },
   },
 ];

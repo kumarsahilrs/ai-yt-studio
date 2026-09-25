@@ -9,6 +9,8 @@ import type {
 } from "./types";
 import { STAGES } from "./stages";
 import { providersFor, getProvider } from "./providers";
+import { ACTIVE_PROJECT_ID, deleteProject, getProject, listSavedProjects, putProject } from "./db";
+import type { ProjectRecord } from "./db";
 
 // ---------------------------------------------------------------------------
 // Dependency-free global store with localStorage persistence. API keys are
@@ -48,6 +50,8 @@ export interface AppState {
   references: ReferenceItem[];
   /** providerId -> manual credit tracking (mainly for video providers on limited trial credits). */
   credits: Record<string, ProviderCredit>;
+  /** Name of the project last explicitly saved/loaded, for display — "Untitled" (unsaved) until then. */
+  activeProjectName?: string;
 }
 
 export function defaultParamsFor(providerId: string): Record<string, string> {
@@ -175,13 +179,60 @@ function persist(state: AppState) {
   }
 }
 
+/** Loaded runtime overlaid onto the current stage shape — any stage still
+ *  marked "running" can't really be (no controller survives a reload). */
+function normalizeLoadedRuntime(
+  saved: Record<string, StageRuntimeState> | undefined,
+  base: Record<string, StageRuntimeState>,
+): Record<string, StageRuntimeState> {
+  if (!saved) return base;
+  const out = { ...base };
+  for (const id of Object.keys(base)) {
+    const s = saved[id];
+    if (s) out[id] = { ...s, status: s.status === "running" ? "idle" : s.status };
+  }
+  return out;
+}
+
 // --- store plumbing --------------------------------------------------------
 
 let state: AppState = hydrate();
 const listeners = new Set<() => void>();
 
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    const s = state;
+    // Gate on the active project's full data (including media, which
+    // localStorage's lighter hydrate() above doesn't carry) having either
+    // loaded from IndexedDB or been confirmed absent first — otherwise an
+    // autosave firing before that finishes would overwrite it with the
+    // thinner localStorage-only state. loadActiveProject() is memoized, so
+    // this is a no-op once startup's own call (main.tsx) has resolved.
+    void loadActiveProject()
+      .then(() =>
+        putProject({
+          id: ACTIVE_PROJECT_ID,
+          name: s.activeProjectName || "Untitled",
+          updatedAt: Date.now(),
+          inputs: s.inputs,
+          wiring: s.wiring,
+          runtime: s.runtime,
+          references: s.references,
+        }),
+      )
+      .catch(() => {
+        /* IndexedDB unavailable (old browser, private-mode limits, quota) —
+         * text/scenes still survive a reload via the localStorage save above. */
+      });
+  }, 800);
+}
+
 function emit() {
   persist(state);
+  scheduleAutosave();
   listeners.forEach((l) => l());
 }
 
@@ -375,6 +426,75 @@ export function remainingCredits(providerId: string, s: AppState = state): numbe
 export function hasCreditsLeft(providerId: string, s: AppState = state): boolean {
   const remaining = remainingCredits(providerId, s);
   return remaining === undefined || remaining > 0;
+}
+
+// --- Full project save/load (IndexedDB) -------------------------------------
+
+export type { ProjectRecord };
+export { listSavedProjects, deleteProject };
+
+/** Loads the continuously-autosaved project (inputs, wiring, every stage's
+ *  output including media) from IndexedDB, upgrading the lighter
+ *  text/scenes-only state hydrate() already read from localStorage. A
+ *  brand-new browser profile has nothing to load — that's not an error, the
+ *  app just starts from buildDefaults() as normal. Called once at startup
+ *  (main.tsx) and memoized, since scheduleAutosave() also waits on it to
+ *  avoid a race where an autosave lands before this load does. */
+let loadActiveProjectOnce: Promise<void> | undefined;
+export function loadActiveProject(): Promise<void> {
+  if (!loadActiveProjectOnce) {
+    loadActiveProjectOnce = (async () => {
+      try {
+        const rec = await getProject(ACTIVE_PROJECT_ID);
+        if (!rec) return;
+        setState((s) => ({
+          inputs: rec.inputs ?? s.inputs,
+          wiring: mergeWiring(s.wiring, rec.wiring),
+          runtime: normalizeLoadedRuntime(rec.runtime, s.runtime),
+          references: mergeReferences(rec.references),
+          activeProjectName: rec.name === "Untitled" ? undefined : rec.name,
+        }));
+      } catch {
+        /* IndexedDB unavailable — the app still runs on localStorage's lighter save. */
+      }
+    })();
+  }
+  return loadActiveProjectOnce;
+}
+
+/** Saves the current work as a new named snapshot the creator can come back
+ *  to later, independent of the continuously-autosaved "current" project. */
+export async function saveProjectAs(name: string): Promise<ProjectRecord> {
+  const trimmed = name.trim() || "Untitled";
+  const record: ProjectRecord = {
+    id: `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: trimmed,
+    updatedAt: Date.now(),
+    inputs: state.inputs,
+    wiring: state.wiring,
+    runtime: state.runtime,
+    references: state.references,
+  };
+  await putProject(record);
+  setState({ activeProjectName: trimmed });
+  return record;
+}
+
+/** Replaces the current work with a saved snapshot — inputs, wiring, every
+ *  stage's output (including media) and the Creative Brief references. Credit
+ *  tracking and API keys are left alone: they reflect the real state of the
+ *  creator's provider accounts, not any one project. */
+export async function loadSavedProject(id: string): Promise<void> {
+  const rec = await getProject(id);
+  if (!rec) throw new Error("That project no longer exists.");
+  const defaults = buildDefaults();
+  setState({
+    inputs: rec.inputs ?? defaults.inputs,
+    wiring: mergeWiring(defaults.wiring, rec.wiring),
+    runtime: normalizeLoadedRuntime(rec.runtime, defaults.runtime),
+    references: mergeReferences(rec.references),
+    activeProjectName: rec.name,
+  });
 }
 
 // --- API keys file ---------------------------------------------------------

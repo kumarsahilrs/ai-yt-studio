@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { InputsBar } from "./components/InputsBar";
 import { StagePanel } from "./components/StagePanel";
 import { Settings } from "./components/Settings";
+import { Projects } from "./components/Projects";
 
 export function App() {
   const view = useStore((s) => s.view);
@@ -41,8 +42,8 @@ export function App() {
     <div className="app">
       <Sidebar running={running} onRunAll={onRunAll} onStopAll={onStopAll} />
       <main className="main">
-        {view !== "settings" && <InputsBar />}
-        {view === "settings" ? <Settings /> : <StagePanel stageId={view} />}
+        {view !== "settings" && view !== "projects" && <InputsBar />}
+        {view === "settings" ? <Settings /> : view === "projects" ? <Projects /> : <StagePanel stageId={view} />}
       </main>
     </div>
   );

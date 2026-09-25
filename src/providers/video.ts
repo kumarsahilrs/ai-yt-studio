@@ -1,5 +1,6 @@
 import type { Provider, RunContext } from "../types";
 import { isRemoteImageUrl } from "../stages";
+import { blobToDataUrl } from "../blob";
 
 // ---------------------------------------------------------------------------
 // Video-generation providers. Every option here runs on limited/trial credits
@@ -209,7 +210,7 @@ export const videoProviders: Provider[] = [
         throw new Error(`${res.status} — ${trim(raw)} (model may be cold-loading; retry shortly)`);
       }
       const blob = await res.blob();
-      return { url: URL.createObjectURL(blob), remote: false };
+      return { url: await blobToDataUrl(blob), remote: false };
     },
   },
   {
