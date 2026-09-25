@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { providersFor, TIER_LABEL } from "../providers";
-import { useStore, setSecret, saveKeys, hasUnsavedKeys } from "../store";
+import { useStore, setSecret, saveKeys, hasUnsavedKeys, setCreditLimit, resetCreditUsage } from "../store";
 import { FieldEditor } from "./FieldEditor";
-import { IconCheck, IconExternal } from "../icons";
+import { IconCheck, IconExternal, IconRefresh } from "../icons";
 import type { StageKind } from "../types";
 
 const KINDS: { kind: StageKind; label: string }[] = [
@@ -67,6 +67,7 @@ export function Settings() {
                       ))}
                     </div>
                   )}
+                  {kind === "video" && <CreditTracker providerId={p.id} />}
                 </div>
               );
             })}
@@ -79,6 +80,50 @@ export function Settings() {
         (voice). That gets you a full run with just one free Gemini key. Add ElevenLabs or the Edge-TTS backend later
         for downloadable, higher-quality narration.
       </div>
+    </div>
+  );
+}
+
+/** Manual usage tracking for a credit-based (mainly video) provider: the creator
+ *  records the trial credits they were given, and the app counts down as
+ *  generations succeed — so the Video stage can warn/disable before a call
+ *  that's just going to fail on an empty account. */
+function CreditTracker({ providerId }: { providerId: string }) {
+  const credit = useStore((s) => s.credits[providerId]);
+  const limit = credit?.limit;
+  const used = credit?.used ?? 0;
+  const remaining = limit === undefined ? undefined : Math.max(0, limit - used);
+
+  return (
+    <div className="credit-tracker">
+      <div className="field" style={{ maxWidth: 200 }}>
+        <label>Free credits given</label>
+        <input
+          className="input"
+          type="number"
+          min={0}
+          placeholder="not tracked"
+          value={limit ?? ""}
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            setCreditLimit(providerId, v === "" ? undefined : Math.max(0, Number(v)));
+          }}
+        />
+      </div>
+      {limit === undefined ? (
+        <span className="hint">
+          Set the trial credits this provider gave you at signup to get a low/no-credit warning here.
+        </span>
+      ) : (
+        <div className="row" style={{ gap: 8 }}>
+          <span className={"pill" + (remaining === 0 ? " danger" : "")}>
+            {used} used · {remaining} left
+          </span>
+          <button className="btn sm ghost" onClick={() => resetCreditUsage(providerId)} title="Reset usage to 0 (e.g. after topping up)">
+            <IconRefresh size={12} /> Reset
+          </button>
+        </div>
+      )}
     </div>
   );
 }

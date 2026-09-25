@@ -1,4 +1,6 @@
 import type { Provider, RunContext } from "../types";
+import { isRemoteImageUrl } from "../stages";
+import { blobToDataUrl } from "../blob";
 
 // ---------------------------------------------------------------------------
 // Video-generation providers. Every option here runs on limited/trial credits
@@ -50,9 +52,10 @@ function requireRemoteImage(imageUrl: string | undefined): string {
   if (!imageUrl) {
     throw new Error("This provider animates a still — run Image Generation first so each scene has an image.");
   }
-  if (imageUrl.startsWith("blob:") || imageUrl.startsWith("data:")) {
+  if (!isRemoteImageUrl(imageUrl)) {
     throw new Error(
-      "This provider needs a public image URL. Generate scene images with Pollinations (remote URLs) instead of Hugging Face/Together (local blobs).",
+      "This provider needs a public image URL, but this scene's image is a local file (from Hugging Face/Together). " +
+        "Go to Image Generation and click \"Fix: regenerate via Pollinations\" on this scene, then retry.",
     );
   }
   return imageUrl;
@@ -207,7 +210,7 @@ export const videoProviders: Provider[] = [
         throw new Error(`${res.status} — ${trim(raw)} (model may be cold-loading; retry shortly)`);
       }
       const blob = await res.blob();
-      return { url: URL.createObjectURL(blob), remote: false };
+      return { url: await blobToDataUrl(blob), remote: false };
     },
   },
   {

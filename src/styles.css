@@ -192,6 +192,10 @@ a:hover {
 .dot.error {
   background: var(--red);
 }
+.dot.stale {
+  background: var(--amber);
+  box-shadow: 0 0 0 2px rgba(245, 183, 78, 0.25);
+}
 @keyframes pulse {
   0%,
   100% {
@@ -389,6 +393,44 @@ a:hover {
 .wire-row .field {
   min-width: 180px;
 }
+.wire-row .field.grow {
+  flex: 1;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ref-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.ref-main {
+  min-width: 0;
+  flex: 1;
+}
+.ref-main .t {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ref-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.spinner.sm {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+}
 
 .badge {
   font-size: 10px;
@@ -550,6 +592,15 @@ a:hover {
   min-width: 220px;
   flex: 1;
 }
+.credit-tracker {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
 .save-bar {
   position: sticky;
   top: 10px;
@@ -625,6 +676,12 @@ a:hover {
   padding: 12px 14px;
   line-height: 1.55;
 }
+.notice.sm {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  border-color: rgba(245, 183, 78, 0.4);
+  color: var(--amber);
+}
 .player {
   background: #000;
   border-radius: 12px;
@@ -689,6 +746,11 @@ a:hover {
   padding: 4px 10px;
   border-radius: 999px;
 }
+.pill.danger {
+  color: var(--red);
+  background: rgba(255, 84, 104, 0.1);
+  border-color: rgba(255, 84, 104, 0.35);
+}
 .check {
   display: inline-flex;
   align-items: center;
@@ -709,6 +771,18 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+/* A <button> styled to read as an inline link (for actions, not navigation) — pairs with .link-ext for layout. */
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+  color: var(--accent-2);
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 /* ---------- responsive ---------- */

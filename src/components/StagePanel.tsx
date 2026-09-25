@@ -1,32 +1,55 @@
 import { useState } from "react";
-import { STAGES } from "../stages";
+import { STAGES, isRemoteImageUrl } from "../stages";
 import { providersFor, getProvider, TIER_LABEL } from "../providers";
 import {
   useStore,
   setStageProvider,
   setStageParam,
   setStagePrompt,
+  remainingCredits,
+  isStageStale,
+  setView,
 } from "../store";
-import { runStage, cancelStage } from "../engine";
+import { runStage, cancelStage, regenerateSceneImage } from "../engine";
 import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
-import { IconPlay, IconStop, IconExternal, IconDownload } from "../icons";
+import { ReferencesPanel } from "./ReferencesPanel";
+import { IconPlay, IconStop, IconExternal, IconDownload, IconRefresh } from "../icons";
 import type { Scene } from "../types";
+
+/** Generative stages, in pipeline order — used for the Storyboard/Assemble
+ *  stage's "what's out of date" summary. */
+const GENERATIVE_STAGE_IDS = ["research", "script", "visuals", "images", "video", "voiceover"];
 
 export function StagePanel({ stageId }: { stageId: string }) {
   const stage = STAGES.find((s) => s.id === stageId)!;
   const wiring = useStore((s) => s.wiring[stageId]);
   const rt = useStore((s) => s.runtime[stageId]) || { status: "idle" };
-  const dimensions = useStore((s) => s.inputs.dimensions);
+  const inputs = useStore((s) => s.inputs);
+  const dimensions = inputs.dimensions;
   // Scenes always come from the Visual Director stage; read unconditionally so
   // hook order stays stable when navigating between stages.
   const visualsScenes = useStore((s) => s.runtime["visuals"]?.scenes);
+  const stills = useStore((s) => s.runtime["images"]?.images);
+  const runtime = useStore((s) => s.runtime);
+  // Re-render when credit usage changes; only relevant for the video stage.
+  useStore((s) => s.credits);
+  // isStageStale() also reads references (for the Research stage); subscribe
+  // so a change there is reflected without needing an unrelated re-render.
+  useStore((s) => s.references);
   const running = rt.status === "running";
 
   const isAssemble = stage.kind === "assemble";
   const options = isAssemble ? [] : providersFor(stage.kind);
   const provider = wiring ? getProvider(wiring.providerId) : undefined;
+  const isVideo = stage.kind === "video";
+  const wiredRemaining = isVideo && wiring ? remainingCredits(wiring.providerId) : undefined;
+  const wiredOutOfCredits = wiredRemaining === 0;
+  const stale = !isAssemble && rt.status === "done" && isStageStale(stageId);
+  const staleUpstream = isAssemble
+    ? GENERATIVE_STAGE_IDS.filter((id) => runtime[id]?.status === "done" && isStageStale(id))
+    : [];
 
   return (
     <div className="panel-wrap">
@@ -42,13 +65,20 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 <IconStop size={15} /> Stop
               </button>
             ) : (
-              <button className="btn primary" onClick={() => runStage(stageId)}>
+              <button
+                className="btn primary"
+                onClick={() => runStage(stageId)}
+                disabled={wiredOutOfCredits}
+                title={wiredOutOfCredits ? "No credits left for this provider — see Settings or pick another." : undefined}
+              >
                 <IconPlay size={15} /> Run this stage
               </button>
             )}
           </div>
         )}
       </div>
+
+      {stageId === "research" && <ReferencesPanel />}
 
       {/* --- wiring card --- */}
       {!isAssemble && wiring && (
@@ -62,12 +92,17 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 value={wiring.providerId}
                 onChange={(e) => setStageProvider(stageId, e.target.value)}
               >
-                {options.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    [{TIER_LABEL[p.tier]}] {p.name}
-                    {p.note ? ` — ${p.note}` : ""}
-                  </option>
-                ))}
+                {options.map((p) => {
+                  const remaining = isVideo ? remainingCredits(p.id) : undefined;
+                  const outOfCredits = remaining === 0;
+                  return (
+                    <option key={p.id} value={p.id} disabled={outOfCredits}>
+                      [{TIER_LABEL[p.tier]}] {p.name}
+                      {p.note ? ` — ${p.note}` : ""}
+                      {remaining !== undefined ? (outOfCredits ? " — no credits left" : ` — ${remaining} credit${remaining === 1 ? "" : "s"} left`) : ""}
+                    </option>
+                  );
+                })}
               </select>
             </div>
             {provider?.params.map((f) => (
@@ -89,11 +124,27 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 <span className="pill">Key set in Settings › API Keys</span>
               )}
               {provider.needsBackend && <span className="pill">⚠ Needs Phase-2 backend</span>}
+              {isVideo && wiredRemaining !== undefined && (
+                <span className={"pill" + (wiredOutOfCredits ? " danger" : "")}>
+                  {wiredOutOfCredits ? "No credits left" : `${wiredRemaining} credit${wiredRemaining === 1 ? "" : "s"} left`}
+                </span>
+              )}
               {provider.signupUrl && (
                 <a className="link-ext" href={provider.signupUrl} target="_blank" rel="noreferrer">
                   Get API key <IconExternal size={12} />
                 </a>
               )}
+            </div>
+          )}
+          {stage.kind !== "video" && (
+            <div className="hint" style={{ display: "block", marginTop: 8 }}>
+              If this fails, the next configured free → paid provider for this stage is tried automatically.
+            </div>
+          )}
+          {isVideo && (
+            <div className="hint" style={{ display: "block", marginTop: 8 }}>
+              Track each provider's trial credits in <b>Settings &amp; API keys</b> to get a warning here before you
+              run out.
             </div>
           )}
 
@@ -114,6 +165,45 @@ export function StagePanel({ stageId }: { stageId: string }) {
       {/* --- output card --- */}
       <div className="card">
         <h3>Output</h3>
+        {stale && (
+          <div className="notice sm" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ flex: 1 }}>
+              ⟳ Out of date — the wiring or an earlier stage changed since this was generated. Rerun to refresh it.
+            </span>
+            <button className="btn sm ghost" onClick={() => runStage(stageId)} disabled={running}>
+              <IconRefresh size={12} /> Rerun
+            </button>
+          </div>
+        )}
+        {isAssemble && staleUpstream.length > 0 && (
+          <div className="notice sm" style={{ marginBottom: 12 }}>
+            ⟳ Out of date: {staleUpstream.map((id, i) => (
+              <span key={id}>
+                {i > 0 && ", "}
+                <button className="link-ext link-btn" style={{ display: "inline" }} onClick={() => setView(id)}>
+                  {STAGES.find((s) => s.id === id)?.title}
+                </button>
+              </span>
+            ))}{" "}
+            changed since a later stage was generated from it — the preview below may not reflect them.
+          </div>
+        )}
+        {rt.usedProviderId && wiring && rt.usedProviderId !== wiring.providerId && (
+          <div className="notice" style={{ marginBottom: 12 }}>
+            ⚡ Auto-switched to <b>{getProvider(rt.usedProviderId)?.name ?? rt.usedProviderId}</b> — the selected
+            provider failed. See details below.
+          </div>
+        )}
+        {rt.fallbackLog && rt.fallbackLog.length > 0 && (
+          <details style={{ marginBottom: 12 }}>
+            <summary className="hint" style={{ cursor: "pointer" }}>
+              Fallback details ({rt.fallbackLog.length})
+            </summary>
+            <div className="output mono" style={{ marginTop: 8 }}>
+              {rt.fallbackLog.join("\n")}
+            </div>
+          </details>
+        )}
         {rt.error && <div className="error-box">{rt.error}</div>}
 
         {stage.kind === "llm" && stage.id !== "visuals" && (
@@ -131,6 +221,7 @@ export function StagePanel({ stageId }: { stageId: string }) {
             dimensions={dimensions}
             running={running}
             rawText={undefined}
+            onFixScene={(n) => regenerateSceneImage(n, "pollinations")}
           />
         )}
 
@@ -138,6 +229,7 @@ export function StagePanel({ stageId }: { stageId: string }) {
           <ScenesView
             scenes={visualsScenes}
             videos={rt.videos || {}}
+            stills={stills}
             dimensions={dimensions}
             running={running}
             rawText={undefined}
@@ -164,20 +256,30 @@ function ScenesView({
   scenes,
   images,
   videos,
+  stills,
   dimensions,
   running,
   rawText,
+  onFixScene,
 }: {
   scenes?: Scene[];
   images?: Record<number, string>;
   videos?: Record<number, string>;
+  /** Only passed for the video stage: the stills from Image Generation, so a
+   *  scene backed by a non-animatable local image can be flagged here too. */
+  stills?: Record<number, string>;
   dimensions: string;
   running: boolean;
   rawText?: string;
+  /** Only passed for the image stage: regenerates one scene's image with a
+   *  specific (always-public) provider, e.g. to fix a non-animatable blob URL. */
+  onFixScene?: (sceneNumber: number) => Promise<void>;
 }) {
   const [showRaw, setShowRaw] = useState(false);
+  const [fixing, setFixing] = useState<number | null>(null);
   const videoMode = !!videos;
   const mediaMode = videoMode || !!images;
+  const stillsForCheck = images ?? stills;
   if ((!scenes || scenes.length === 0) && running) return <Loading label="Working…" />;
   if (!scenes || scenes.length === 0)
     return <div className="empty">No scenes yet. Run the Visual Director to break the script into scenes.</div>;
@@ -201,6 +303,9 @@ function ScenesView({
           const img = images?.[sc.scene];
           const vid = videos?.[sc.scene];
           const media = videoMode ? vid : img;
+          const still = stillsForCheck?.[sc.scene];
+          const notAnimatable = !!still && !isRemoteImageUrl(still);
+          const isFixing = fixing === sc.scene;
           return (
             <div className="scene-card" key={sc.scene}>
               {mediaMode && (
@@ -229,6 +334,34 @@ function ScenesView({
                   <a className="link-ext" href={media} target="_blank" rel="noreferrer" style={{ marginTop: 6 }}>
                     Open {videoMode ? "clip" : "image"} <IconExternal size={12} />
                   </a>
+                )}
+                {notAnimatable && (
+                  <div className="notice sm" style={{ marginTop: 8 }}>
+                    ⚠ Local image — most video providers (Runway, MiniMax I2V, fal/Luma image mode) can't animate it.
+                    {onFixScene ? (
+                      <>
+                        {" "}
+                        <button
+                          className="btn sm ghost"
+                          disabled={isFixing}
+                          onClick={async () => {
+                            setFixing(sc.scene);
+                            try {
+                              await onFixScene(sc.scene);
+                            } catch {
+                              /* the scene keeps its old image; nothing else to do here */
+                            } finally {
+                              setFixing(null);
+                            }
+                          }}
+                        >
+                          {isFixing ? "Fixing…" : "Fix: regenerate via Pollinations"}
+                        </button>
+                      </>
+                    ) : (
+                      " Fix it from Image Generation."
+                    )}
+                  </div>
                 )}
               </div>
             </div>

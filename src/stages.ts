@@ -118,6 +118,13 @@ export function dimsToPixels(dimensions: string): { width: number; height: numbe
   }
 }
 
+/** True for a real HTTP(S) URL the video providers can fetch — false for a
+ *  browser-local blob: object URL or an inline data: URI, which only exist in
+ *  this tab and aren't reachable by an external API (Runway, MiniMax I2V, ...). */
+export function isRemoteImageUrl(url: string | undefined): boolean {
+  return !!url && !url.startsWith("blob:") && !url.startsWith("data:");
+}
+
 /** Robustly pull a JSON array of scenes out of an LLM response. */
 export function parseScenes(text: string): import("./types").Scene[] {
   let t = text.trim();

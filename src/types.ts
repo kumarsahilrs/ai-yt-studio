@@ -92,6 +92,29 @@ export interface Scene {
   imagePrompt: string;
 }
 
+/** Manual credit tracking for a (usually video) provider on limited trial
+ *  credits: the creator records what the provider gave them at signup, and
+ *  the app counts down as generations succeed. */
+export interface ProviderCredit {
+  /** Starting balance the creator was given (e.g. free trial credits). Undefined = untracked (treated as unlimited). */
+  limit?: number;
+  /** Consumed so far, auto-incremented on each successful generation. */
+  used: number;
+}
+
+/** A YouTube video/channel or web page link, read into text by the Phase-2
+ *  backend and fed to the Research & Hook agent as competitor context. */
+export interface ReferenceItem {
+  id: string;
+  url: string;
+  status: "loading" | "done" | "error";
+  kind?: "youtube-video" | "youtube-channel" | "web";
+  title?: string;
+  author?: string;
+  content?: string;
+  error?: string;
+}
+
 export type StageStatus = "idle" | "running" | "done" | "error";
 
 export interface StageDef {
@@ -126,4 +149,13 @@ export interface StageRuntimeState {
   audioPlaybackOnly?: boolean;
   startedAt?: number;
   finishedAt?: number;
+  /** The provider that actually produced the last successful output — may differ
+   *  from the stage's wired provider when automatic fallback kicked in. */
+  usedProviderId?: string;
+  /** Human-readable notes of each fallback that happened during the run. */
+  fallbackLog?: string[];
+  /** A fingerprint of everything this output was generated from (its own wiring
+   *  plus its upstream stages' content) — compared against the same fingerprint
+   *  computed from current state to flag the output as stale/out-of-sync. */
+  sourceFingerprint?: string;
 }

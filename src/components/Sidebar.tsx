@@ -1,5 +1,5 @@
 import { STAGES } from "../stages";
-import { useStore, setView } from "../store";
+import { useStore, setView, isStageStale } from "../store";
 import { runAll } from "../engine";
 import {
   IconSearch,
@@ -12,6 +12,7 @@ import {
   IconSettings,
   IconBolt,
   IconStop,
+  IconFolder,
 } from "../icons";
 import type { StageStatus } from "../types";
 
@@ -28,6 +29,13 @@ const STAGE_ICON: Record<string, (p: any) => JSX.Element> = {
 export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; onRunAll: () => void; onStopAll: () => void }) {
   const view = useStore((s) => s.view);
   const runtime = useStore((s) => s.runtime);
+  const activeProjectName = useStore((s) => s.activeProjectName);
+  // isStageStale() also reads inputs/wiring/references, which don't change the
+  // "runtime" object reference above — subscribe to them too so a stale badge
+  // appears the moment they do, not just when runtime itself next changes.
+  useStore((s) => s.inputs);
+  useStore((s) => s.wiring);
+  useStore((s) => s.references);
 
   return (
     <aside className="sidebar">
@@ -46,13 +54,14 @@ export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; on
         {STAGES.map((stage, i) => {
           const Icon = STAGE_ICON[stage.id];
           const status: StageStatus = runtime[stage.id]?.status ?? "idle";
+          const stale = status === "done" && isStageStale(stage.id);
           return (
             <button
               key={stage.id}
               className={"stage-item" + (view === stage.id ? " active" : "")}
               onClick={() => setView(stage.id)}
               title={stage.title}
-              aria-label={`Stage ${i + 1}: ${stage.title} (${status})`}
+              aria-label={`Stage ${i + 1}: ${stage.title} (${stale ? "done, stale" : status})`}
             >
               <span className="stage-num">{i + 1}</span>
               <span className="stage-meta">
@@ -62,7 +71,10 @@ export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; on
                 </span>
                 <span className="stage-sub">{stage.short}</span>
               </span>
-              <span className={"dot " + status} title={status} />
+              <span
+                className={"dot " + (stale ? "stale" : status)}
+                title={stale ? "Done, but out of date — something it depends on changed" : status}
+              />
             </button>
           );
         })}
@@ -83,6 +95,16 @@ export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; on
             <IconBolt size={15} /> <span className="btn-label">Run full pipeline</span>
           </button>
         )}
+        <button
+          className={"btn ghost full" + (view === "projects" ? " active" : "")}
+          style={{ marginTop: 8 }}
+          onClick={() => setView("projects")}
+          title={activeProjectName ? `Projects (current: ${activeProjectName})` : "Projects"}
+          aria-label="Projects"
+        >
+          <IconFolder size={15} />{" "}
+          <span className="btn-label">{activeProjectName ? `Project: ${activeProjectName}` : "Projects"}</span>
+        </button>
         <button
           className={"btn ghost full" + (view === "settings" ? " active" : "")}
           style={{ marginTop: 8 }}

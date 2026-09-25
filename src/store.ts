@@ -2,11 +2,15 @@ import { useSyncExternalStore } from "react";
 import type {
   AspectRatio,
   ProjectInputs,
+  ProviderCredit,
+  ReferenceItem,
   StageRuntimeState,
   StageWiring,
 } from "./types";
 import { STAGES } from "./stages";
 import { providersFor, getProvider } from "./providers";
+import { ACTIVE_PROJECT_ID, deleteProject, getProject, listSavedProjects, putProject } from "./db";
+import type { ProjectRecord } from "./db";
 
 // ---------------------------------------------------------------------------
 // Dependency-free global store with localStorage persistence. API keys are
@@ -42,9 +46,15 @@ export interface AppState {
   runtime: Record<string, StageRuntimeState>;
   /** which stage panel is open, or "settings" */
   view: string;
+  /** Creative Brief: reference links (YouTube videos/channels, web pages) fed to Research & Hook. */
+  references: ReferenceItem[];
+  /** providerId -> manual credit tracking (mainly for video providers on limited trial credits). */
+  credits: Record<string, ProviderCredit>;
+  /** Name of the project last explicitly saved/loaded, for display — "Untitled" (unsaved) until then. */
+  activeProjectName?: string;
 }
 
-function defaultParamsFor(providerId: string): Record<string, string> {
+export function defaultParamsFor(providerId: string): Record<string, string> {
   const p = getProvider(providerId);
   const out: Record<string, string> = {};
   p?.params.forEach((f) => {
@@ -80,6 +90,8 @@ function buildDefaults(): AppState {
     wiring,
     runtime,
     view: STAGES[0].id,
+    references: [],
+    credits: {},
   };
 }
 
@@ -97,6 +109,8 @@ function hydrate(): AppState {
       wiring: mergeWiring(base.wiring, saved.wiring),
       runtime: mergeRuntime(base.runtime, saved.runtime),
       view: base.view,
+      references: mergeReferences(saved.references),
+      credits: saved.credits && typeof saved.credits === "object" ? saved.credits : {},
     };
   } catch {
     return base;
@@ -134,6 +148,15 @@ function mergeRuntime(
   return out;
 }
 
+/** Reference content is plain text (no blob URLs), so it's safe to persist as-is —
+ *  except a run interrupted mid-fetch by a reload, which comes back as an error. */
+function mergeReferences(saved: ReferenceItem[] | undefined): ReferenceItem[] {
+  if (!Array.isArray(saved)) return [];
+  return saved.map((r) =>
+    r.status === "loading" ? { ...r, status: "error", error: "Interrupted by a page reload. Click retry." } : r,
+  );
+}
+
 function persist(state: AppState) {
   try {
     const runtimeToSave: Record<string, any> = {};
@@ -147,6 +170,8 @@ function persist(state: AppState) {
         secrets: state.secrets,
         wiring: state.wiring,
         runtime: runtimeToSave,
+        references: state.references,
+        credits: state.credits,
       }),
     );
   } catch {
@@ -154,13 +179,60 @@ function persist(state: AppState) {
   }
 }
 
+/** Loaded runtime overlaid onto the current stage shape — any stage still
+ *  marked "running" can't really be (no controller survives a reload). */
+function normalizeLoadedRuntime(
+  saved: Record<string, StageRuntimeState> | undefined,
+  base: Record<string, StageRuntimeState>,
+): Record<string, StageRuntimeState> {
+  if (!saved) return base;
+  const out = { ...base };
+  for (const id of Object.keys(base)) {
+    const s = saved[id];
+    if (s) out[id] = { ...s, status: s.status === "running" ? "idle" : s.status };
+  }
+  return out;
+}
+
 // --- store plumbing --------------------------------------------------------
 
 let state: AppState = hydrate();
 const listeners = new Set<() => void>();
 
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    const s = state;
+    // Gate on the active project's full data (including media, which
+    // localStorage's lighter hydrate() above doesn't carry) having either
+    // loaded from IndexedDB or been confirmed absent first — otherwise an
+    // autosave firing before that finishes would overwrite it with the
+    // thinner localStorage-only state. loadActiveProject() is memoized, so
+    // this is a no-op once startup's own call (main.tsx) has resolved.
+    void loadActiveProject()
+      .then(() =>
+        putProject({
+          id: ACTIVE_PROJECT_ID,
+          name: s.activeProjectName || "Untitled",
+          updatedAt: Date.now(),
+          inputs: s.inputs,
+          wiring: s.wiring,
+          runtime: s.runtime,
+          references: s.references,
+        }),
+      )
+      .catch(() => {
+        /* IndexedDB unavailable (old browser, private-mode limits, quota) —
+         * text/scenes still survive a reload via the localStorage save above. */
+      });
+  }, 800);
+}
+
 function emit() {
   persist(state);
+  scheduleAutosave();
   listeners.forEach((l) => l());
 }
 
@@ -239,6 +311,246 @@ export function stageConfig(stageId: string): Record<string, string> {
   if (!w) return {};
   const secrets = state.secrets[w.providerId] || {};
   return { ...secrets, ...w.params };
+}
+
+/** Config for a specific provider when it runs as part of a stage: that provider's
+ *  own saved secrets, plus its wired params if it's the stage's selected provider
+ *  (preserves any edits, e.g. a custom model name) or its defaults otherwise —
+ *  used when a fallback provider steps in for the one the stage has wired up. */
+export function configForProvider(providerId: string, stageId: string): Record<string, string> {
+  const secrets = state.secrets[providerId] || {};
+  const w = state.wiring[stageId];
+  const params = w?.providerId === providerId ? w.params : defaultParamsFor(providerId);
+  return { ...secrets, ...params };
+}
+
+/** True if every secret a provider needs (e.g. an API key) has a non-empty value saved. */
+export function isProviderConfigured(providerId: string): boolean {
+  const provider = getProvider(providerId);
+  if (!provider || provider.secrets.length === 0) return true;
+  const secrets = state.secrets[providerId] || {};
+  return provider.secrets.every((f) => (secrets[f.key] || "").trim().length > 0);
+}
+
+// --- Creative Brief: reference links ----------------------------------------
+
+const REFERENCE_ENDPOINT = "/render/reference";
+
+function newReferenceId(): string {
+  return `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function fetchReference(id: string, url: string): Promise<void> {
+  try {
+    const res = await fetch(REFERENCE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+    setState((s) => ({
+      references: s.references.map((r) =>
+        r.id === id
+          ? { ...r, status: "done", kind: body.kind, title: body.title, author: body.author, content: body.content }
+          : r,
+      ),
+    }));
+  } catch (err) {
+    const message =
+      err instanceof TypeError
+        ? "Couldn't reach the render backend. Start it (cd backend && uvicorn main:app --port 8000) — see README."
+        : (err as Error).message;
+    setState((s) => ({
+      references: s.references.map((r) => (r.id === id ? { ...r, status: "error", error: message } : r)),
+    }));
+  }
+}
+
+/** Adds a reference link and kicks off reading it in the background. */
+export function addReference(rawUrl: string) {
+  const url = rawUrl.trim();
+  if (!url) return;
+  if (state.references.some((r) => r.url === url)) return; // already added
+  const id = newReferenceId();
+  setState((s) => ({ references: [...s.references, { id, url, status: "loading" }] }));
+  void fetchReference(id, url);
+}
+
+export function removeReference(id: string) {
+  setState((s) => ({ references: s.references.filter((r) => r.id !== id) }));
+}
+
+export function retryReference(id: string) {
+  const ref = state.references.find((r) => r.id === id);
+  if (!ref) return;
+  setState((s) => ({
+    references: s.references.map((r) => (r.id === id ? { ...r, status: "loading", error: undefined } : r)),
+  }));
+  void fetchReference(id, ref.url);
+}
+
+// --- Credit tracking (mainly video providers on limited trial credits) -----
+
+/** Sets (or clears, with undefined) the creator's known starting credit balance for a provider. */
+export function setCreditLimit(providerId: string, limit: number | undefined) {
+  setState((s) => ({
+    credits: { ...s.credits, [providerId]: { used: s.credits[providerId]?.used ?? 0, limit } },
+  }));
+}
+
+/** Called after each successful generation to count down the balance. */
+export function recordCreditUse(providerId: string, amount = 1) {
+  setState((s) => ({
+    credits: {
+      ...s.credits,
+      [providerId]: { limit: s.credits[providerId]?.limit, used: (s.credits[providerId]?.used ?? 0) + amount },
+    },
+  }));
+}
+
+/** Zeroes usage without forgetting the limit — e.g. a new billing cycle, or the account was topped up. */
+export function resetCreditUsage(providerId: string) {
+  setState((s) => ({
+    credits: { ...s.credits, [providerId]: { limit: s.credits[providerId]?.limit, used: 0 } },
+  }));
+}
+
+/** undefined = untracked (no known limit, treated as unlimited). */
+export function remainingCredits(providerId: string, s: AppState = state): number | undefined {
+  const c = s.credits[providerId];
+  if (!c || c.limit === undefined) return undefined;
+  return Math.max(0, c.limit - c.used);
+}
+
+export function hasCreditsLeft(providerId: string, s: AppState = state): boolean {
+  const remaining = remainingCredits(providerId, s);
+  return remaining === undefined || remaining > 0;
+}
+
+// --- Stage staleness (redo without silently leaving out-of-sync output) ----
+//
+// "Stale" means: this stage's shown output was generated from an older
+// version of something it depends on — its own wiring (provider/params/
+// prompt), or an upstream stage's content — and hasn't been rerun since. It's
+// informational only; nothing here blocks viewing/using a stale output, it
+// just stops a changed prompt or a rerun upstream stage from silently going
+// unnoticed downstream.
+
+/** Everything the given stage's PROMPT/INPUT actually depends on right now —
+ *  not its own previous output, so this never includes the stage's own
+ *  runtime.text/scenes/etc. */
+function upstreamFingerprint(stageId: string, s: AppState): unknown {
+  const { inputs, runtime } = s;
+  switch (stageId) {
+    case "research":
+      return {
+        inputs,
+        // Order-independent: which references are readable right now, not the order they were added in.
+        refs: s.references
+          .filter((r) => r.status === "done")
+          .map((r) => r.id)
+          .sort(),
+      };
+    case "script":
+      return { research: runtime.research?.text, inputs };
+    case "visuals":
+      return { script: runtime.script?.text, dimensions: inputs.dimensions };
+    case "images":
+      return { scenes: runtime.visuals?.scenes?.map((sc) => sc.imagePrompt), dimensions: inputs.dimensions };
+    case "video":
+      return { scenes: runtime.visuals?.scenes?.map((sc) => sc.imagePrompt), stills: runtime.images?.images };
+    case "voiceover":
+      return { script: runtime.script?.text };
+    default:
+      return undefined;
+  }
+}
+
+/** The full fingerprint: the stage's own wiring plus what it depends on upstream. */
+export function stageFingerprint(stageId: string, s: AppState = state): string {
+  const w = s.wiring[stageId];
+  return JSON.stringify({
+    own: w ? { providerId: w.providerId, params: w.params, systemPrompt: w.systemPrompt } : undefined,
+    upstream: upstreamFingerprint(stageId, s),
+  });
+}
+
+/** True once a stage has a completed output AND that output's fingerprint no
+ *  longer matches current state — its wiring or an upstream stage moved on. */
+export function isStageStale(stageId: string, s: AppState = state): boolean {
+  const rt = s.runtime[stageId];
+  if (!rt || rt.status !== "done" || rt.sourceFingerprint === undefined) return false;
+  return stageFingerprint(stageId, s) !== rt.sourceFingerprint;
+}
+
+// --- Full project save/load (IndexedDB) -------------------------------------
+
+export type { ProjectRecord };
+export { listSavedProjects, deleteProject };
+
+/** Loads the continuously-autosaved project (inputs, wiring, every stage's
+ *  output including media) from IndexedDB, upgrading the lighter
+ *  text/scenes-only state hydrate() already read from localStorage. A
+ *  brand-new browser profile has nothing to load — that's not an error, the
+ *  app just starts from buildDefaults() as normal. Called once at startup
+ *  (main.tsx) and memoized, since scheduleAutosave() also waits on it to
+ *  avoid a race where an autosave lands before this load does. */
+let loadActiveProjectOnce: Promise<void> | undefined;
+export function loadActiveProject(): Promise<void> {
+  if (!loadActiveProjectOnce) {
+    loadActiveProjectOnce = (async () => {
+      try {
+        const rec = await getProject(ACTIVE_PROJECT_ID);
+        if (!rec) return;
+        setState((s) => ({
+          inputs: rec.inputs ?? s.inputs,
+          wiring: mergeWiring(s.wiring, rec.wiring),
+          runtime: normalizeLoadedRuntime(rec.runtime, s.runtime),
+          references: mergeReferences(rec.references),
+          activeProjectName: rec.name === "Untitled" ? undefined : rec.name,
+        }));
+      } catch {
+        /* IndexedDB unavailable — the app still runs on localStorage's lighter save. */
+      }
+    })();
+  }
+  return loadActiveProjectOnce;
+}
+
+/** Saves the current work as a new named snapshot the creator can come back
+ *  to later, independent of the continuously-autosaved "current" project. */
+export async function saveProjectAs(name: string): Promise<ProjectRecord> {
+  const trimmed = name.trim() || "Untitled";
+  const record: ProjectRecord = {
+    id: `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: trimmed,
+    updatedAt: Date.now(),
+    inputs: state.inputs,
+    wiring: state.wiring,
+    runtime: state.runtime,
+    references: state.references,
+  };
+  await putProject(record);
+  setState({ activeProjectName: trimmed });
+  return record;
+}
+
+/** Replaces the current work with a saved snapshot — inputs, wiring, every
+ *  stage's output (including media) and the Creative Brief references. Credit
+ *  tracking and API keys are left alone: they reflect the real state of the
+ *  creator's provider accounts, not any one project. */
+export async function loadSavedProject(id: string): Promise<void> {
+  const rec = await getProject(id);
+  if (!rec) throw new Error("That project no longer exists.");
+  const defaults = buildDefaults();
+  setState({
+    inputs: rec.inputs ?? defaults.inputs,
+    wiring: mergeWiring(defaults.wiring, rec.wiring),
+    runtime: normalizeLoadedRuntime(rec.runtime, defaults.runtime),
+    references: mergeReferences(rec.references),
+    activeProjectName: rec.name,
+  });
 }
 
 // --- API keys file ---------------------------------------------------------
