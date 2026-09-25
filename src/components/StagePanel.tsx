@@ -10,7 +10,7 @@ import {
   isStageStale,
   setView,
 } from "../store";
-import { runStage, cancelStage, regenerateSceneImage } from "../engine";
+import { runStage, cancelStage, regenerateSceneImage, retrySceneImage, retrySceneVideo, retryFailedScenes } from "../engine";
 import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
@@ -222,10 +222,13 @@ export function StagePanel({ stageId }: { stageId: string }) {
           <ScenesView
             scenes={visualsScenes}
             images={rt.images}
+            sceneErrors={rt.sceneErrors}
             dimensions={dimensions}
             running={running}
             rawText={undefined}
             onFixScene={(n) => regenerateSceneImage(n, "pollinations")}
+            onRetryScene={retrySceneImage}
+            onRetryFailed={() => retryFailedScenes("images")}
           />
         )}
 
@@ -233,10 +236,13 @@ export function StagePanel({ stageId }: { stageId: string }) {
           <ScenesView
             scenes={visualsScenes}
             videos={rt.videos || {}}
+            sceneErrors={rt.sceneErrors}
             stills={stills}
             dimensions={dimensions}
             running={running}
             rawText={undefined}
+            onRetryScene={retrySceneVideo}
+            onRetryFailed={() => retryFailedScenes("video")}
           />
         )}
 
@@ -366,15 +372,20 @@ function ScenesView({
   scenes,
   images,
   videos,
+  sceneErrors,
   stills,
   dimensions,
   running,
   rawText,
   onFixScene,
+  onRetryScene,
+  onRetryFailed,
 }: {
   scenes?: Scene[];
   images?: Record<number, string>;
   videos?: Record<number, string>;
+  /** Per-scene generation failures — a scene here failed but didn't stop the rest of the batch. */
+  sceneErrors?: Record<number, string>;
   /** Only passed for the video stage: the stills from Image Generation, so a
    *  scene backed by a non-animatable local image can be flagged here too. */
   stills?: Record<number, string>;
@@ -384,15 +395,45 @@ function ScenesView({
   /** Only passed for the image stage: regenerates one scene's image with a
    *  specific (always-public) provider, e.g. to fix a non-animatable blob URL. */
   onFixScene?: (sceneNumber: number) => Promise<void>;
+  /** Redoes one scene (whatever its current state) without rerunning the whole stage. */
+  onRetryScene?: (sceneNumber: number) => Promise<void>;
+  /** Redoes every currently-failed scene in one click. */
+  onRetryFailed?: () => Promise<void>;
 }) {
   const [showRaw, setShowRaw] = useState(false);
-  const [fixing, setFixing] = useState<number | null>(null);
+  const [busyScene, setBusyScene] = useState<number | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
   const videoMode = !!videos;
   const mediaMode = videoMode || !!images;
   const stillsForCheck = images ?? stills;
+  const failedCount = Object.keys(sceneErrors || {}).length;
   if ((!scenes || scenes.length === 0) && running) return <Loading label="Working…" />;
   if (!scenes || scenes.length === 0)
     return <div className="empty">No scenes yet. Run the Visual Director to break the script into scenes.</div>;
+
+  async function retryOne(sceneNumber: number) {
+    if (!onRetryScene) return;
+    setBusyScene(sceneNumber);
+    try {
+      await onRetryScene(sceneNumber);
+    } catch {
+      /* the scene's error is already recorded and shown below; nothing else to do here */
+    } finally {
+      setBusyScene(null);
+    }
+  }
+
+  async function fixOne(sceneNumber: number) {
+    if (!onFixScene) return;
+    setBusyScene(sceneNumber);
+    try {
+      await onFixScene(sceneNumber);
+    } catch {
+      /* the scene keeps its old image; nothing else to do here */
+    } finally {
+      setBusyScene(null);
+    }
+  }
 
   const ratioClass = dimensions === "9:16" ? "r916" : dimensions === "1:1" ? "r11" : "";
   return (
@@ -401,6 +442,22 @@ function ScenesView({
         <span className="pill">{scenes.length} scenes</span>
         {images && <span className="pill">{Object.keys(images).length} images rendered</span>}
         {videos && <span className="pill">{Object.keys(videos).length} clips rendered</span>}
+        {failedCount > 0 && onRetryFailed && (
+          <button
+            className="btn sm danger"
+            disabled={retryingAll || running}
+            onClick={async () => {
+              setRetryingAll(true);
+              try {
+                await onRetryFailed();
+              } finally {
+                setRetryingAll(false);
+              }
+            }}
+          >
+            <IconRefresh size={12} /> {retryingAll ? "Retrying…" : `Retry ${failedCount} failed scene${failedCount === 1 ? "" : "s"}`}
+          </button>
+        )}
         {rawText && (
           <button className="btn sm ghost" onClick={() => setShowRaw((v) => !v)}>
             {showRaw ? "Hide" : "Show"} raw JSON
@@ -415,7 +472,8 @@ function ScenesView({
           const media = videoMode ? vid : img;
           const still = stillsForCheck?.[sc.scene];
           const notAnimatable = !!still && !isRemoteImageUrl(still);
-          const isFixing = fixing === sc.scene;
+          const sceneError = sceneErrors?.[sc.scene];
+          const isBusy = busyScene === sc.scene;
           return (
             <div className="scene-card" key={sc.scene}>
               {mediaMode && (
@@ -445,27 +503,26 @@ function ScenesView({
                     Open {videoMode ? "clip" : "image"} <IconExternal size={12} />
                   </a>
                 )}
+                {sceneError && (
+                  <div className="error-box sm" style={{ marginTop: 8 }}>
+                    {sceneError}
+                    {onRetryScene && (
+                      <div style={{ marginTop: 6 }}>
+                        <button className="btn sm ghost" disabled={isBusy} onClick={() => retryOne(sc.scene)}>
+                          {isBusy ? "Retrying…" : <><IconRefresh size={11} /> Retry this scene</>}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {notAnimatable && (
                   <div className="notice sm" style={{ marginTop: 8 }}>
                     ⚠ Local image — most video providers (Runway, MiniMax I2V, fal/Luma image mode) can't animate it.
                     {onFixScene ? (
                       <>
                         {" "}
-                        <button
-                          className="btn sm ghost"
-                          disabled={isFixing}
-                          onClick={async () => {
-                            setFixing(sc.scene);
-                            try {
-                              await onFixScene(sc.scene);
-                            } catch {
-                              /* the scene keeps its old image; nothing else to do here */
-                            } finally {
-                              setFixing(null);
-                            }
-                          }}
-                        >
-                          {isFixing ? "Fixing…" : "Fix: regenerate via Pollinations"}
+                        <button className="btn sm ghost" disabled={isBusy} onClick={() => fixOne(sc.scene)}>
+                          {isBusy ? "Fixing…" : "Fix: regenerate via Pollinations"}
                         </button>
                       </>
                     ) : (

@@ -162,6 +162,11 @@ export interface StageRuntimeState {
   images?: Record<number, string>;
   /** Video clip URLs indexed by scene number. */
   videos?: Record<number, string>;
+  /** Per-scene generation failures (image/video stages) — a scene here has no
+   *  entry in images/videos yet. Populated fresh each full run; cleared per
+   *  scene as each one is successfully (re)generated. One bad scene no longer
+   *  aborts the rest of the batch — every scene is still attempted. */
+  sceneErrors?: Record<number, string>;
   /** Voiceover audio blob URL. */
   audioUrl?: string;
   audioPlaybackOnly?: boolean;

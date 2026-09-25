@@ -177,17 +177,32 @@ export async function runStage(stageId: string): Promise<void> {
         throw new Error("Run the Visual Director first — image generation needs scene prompts.");
       }
       const images: Record<number, string> = { ...(getState().runtime[stageId]?.images || {}) };
+      const sceneErrors: Record<number, string> = {};
+      let lastProviderId: string | undefined;
       for (const scene of scenes) {
         if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-        const { result, providerId, note } = await withFallback(
-          stageId,
-          "image",
-          (p, c) => p.runImage!(scene.imagePrompt, c),
-          ctx,
+        try {
+          const { result, providerId, note } = await withFallback(
+            stageId,
+            "image",
+            (p, c) => p.runImage!(scene.imagePrompt, c),
+            ctx,
+          );
+          images[scene.scene] = result.url;
+          lastProviderId = providerId;
+          logFallback(`Scene ${scene.scene}: `, note);
+        } catch (err: any) {
+          if (err?.name === "AbortError") throw err;
+          // One scene's failure doesn't stop the rest of the batch — every scene still gets a try.
+          sceneErrors[scene.scene] = err?.message || String(err);
+        }
+        setRuntime(stageId, { images: { ...images }, sceneErrors: { ...sceneErrors }, usedProviderId: lastProviderId });
+      }
+      if (Object.keys(sceneErrors).length > 0) {
+        throw new Error(
+          `${Object.keys(sceneErrors).length} of ${scenes.length} scene(s) failed to generate — see each scene ` +
+            `below and use its Retry button, or "Retry failed scenes" to redo them all.`,
         );
-        images[scene.scene] = result.url;
-        logFallback(`Scene ${scene.scene}: `, note);
-        setRuntime(stageId, { images: { ...images }, usedProviderId: providerId });
       }
     } else if (stage.kind === "video") {
       // Deliberately no auto-fallback: video providers run on limited trial
@@ -207,15 +222,37 @@ export async function runStage(stageId: string): Promise<void> {
       }
       const stills = getState().runtime["images"]?.images || {};
       const videos: Record<number, string> = { ...(getState().runtime[stageId]?.videos || {}) };
+      const sceneErrors: Record<number, string> = {};
+      let stoppedForCredits = false;
       for (const scene of scenes) {
         if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
         if (!hasCreditsLeft(provider.id)) {
-          throw new Error(`Ran out of ${provider.name} credits after scene ${scene.scene - 1}. Remaining scenes were not attempted.`);
+          stoppedForCredits = true;
+          break;
         }
-        const res = await provider.runVideo!(scene.imagePrompt, stills[scene.scene], ctx);
-        recordCreditUse(provider.id);
-        videos[scene.scene] = res.url;
-        setRuntime(stageId, { videos: { ...videos } });
+        try {
+          const res = await provider.runVideo!(scene.imagePrompt, stills[scene.scene], ctx);
+          recordCreditUse(provider.id);
+          videos[scene.scene] = res.url;
+        } catch (err: any) {
+          if (err?.name === "AbortError") throw err;
+          // A failed attempt doesn't spend a credit (recordCreditUse only runs on success)
+          // and doesn't stop the rest of the batch — every remaining scene still gets a try.
+          sceneErrors[scene.scene] = err?.message || String(err);
+        }
+        setRuntime(stageId, { videos: { ...videos }, sceneErrors: { ...sceneErrors } });
+      }
+      const failCount = Object.keys(sceneErrors).length;
+      if (stoppedForCredits) {
+        throw new Error(
+          `Ran out of ${provider.name} credits.${failCount ? ` ${failCount} scene(s) also failed to generate —` : ""} Remaining scenes were not attempted.`,
+        );
+      }
+      if (failCount > 0) {
+        throw new Error(
+          `${failCount} of ${scenes.length} scene(s) failed to generate — see each scene below and use its Retry ` +
+            `button, or "Retry failed scenes" to redo them all.`,
+        );
       }
     } else if (stage.kind === "tts") {
       const script = getState().runtime["script"]?.text;
@@ -257,7 +294,85 @@ export async function regenerateSceneImage(sceneNumber: number, providerId: stri
   const ctx: RunContext = { config: configForProvider(providerId, stageId), inputs, width, height };
   const res = await provider.runImage(scene.imagePrompt, ctx);
   const images = { ...(getState().runtime[stageId]?.images || {}), [sceneNumber]: res.url };
-  setRuntime(stageId, { images });
+  setRuntime(stageId, { images, ...clearSceneError(stageId, sceneNumber) });
+}
+
+/** Drops a scene's recorded error (a fresh attempt just resolved it) and, if that
+ *  was the last one outstanding, flips the stage back from "error" to "done" —
+ *  shared by every path that can resolve a single failed scene. */
+function clearSceneError(stageId: string, sceneNumber: number): Partial<import("./types").StageRuntimeState> {
+  const rt = getState().runtime[stageId];
+  const sceneErrors = { ...(rt?.sceneErrors || {}) };
+  if (!(sceneNumber in sceneErrors)) return {};
+  delete sceneErrors[sceneNumber];
+  const resolved = Object.keys(sceneErrors).length === 0 && rt?.status === "error";
+  return {
+    sceneErrors,
+    ...(resolved ? { status: "done" as const, error: undefined, sourceFingerprint: stageFingerprint(stageId, getState()) } : {}),
+  };
+}
+
+/** Redoes one failed (or any) scene's image without rerunning the whole stage —
+ *  the wired provider, with the normal automatic fallback chain. */
+export async function retrySceneImage(sceneNumber: number): Promise<void> {
+  const stageId = "images";
+  const scene = getState().runtime["visuals"]?.scenes?.find((s) => s.scene === sceneNumber);
+  if (!scene) throw new Error(`Scene ${sceneNumber} not found.`);
+  const ctx = makeCtx(stageId, new AbortController().signal);
+  try {
+    const { result, providerId } = await withFallback(stageId, "image", (p, c) => p.runImage!(scene.imagePrompt, c), ctx);
+    const images = { ...(getState().runtime[stageId]?.images || {}), [sceneNumber]: result.url };
+    setRuntime(stageId, { images, usedProviderId: providerId, ...clearSceneError(stageId, sceneNumber) });
+  } catch (err: any) {
+    const sceneErrors = { ...(getState().runtime[stageId]?.sceneErrors || {}), [sceneNumber]: err?.message || String(err) };
+    setRuntime(stageId, { sceneErrors });
+    throw err;
+  }
+}
+
+/** Redoes one failed (or any) scene's video clip without rerunning the whole
+ *  stage or the credit check — video providers have no auto-fallback (see
+ *  runStage), so this uses the stage's wired provider directly. */
+export async function retrySceneVideo(sceneNumber: number): Promise<void> {
+  const stageId = "video";
+  const wiring = getState().wiring[stageId];
+  const provider = getProvider(wiring?.providerId);
+  if (!provider) throw new Error("No provider selected. Pick one in this stage's settings.");
+  if (!hasCreditsLeft(provider.id)) {
+    throw new Error(`No credits left for ${provider.name}. Raise the limit or reset usage in Settings, or pick another provider.`);
+  }
+  const scene = getState().runtime["visuals"]?.scenes?.find((s) => s.scene === sceneNumber);
+  if (!scene) throw new Error(`Scene ${sceneNumber} not found.`);
+  const stills = getState().runtime["images"]?.images || {};
+  const { inputs } = getState();
+  const { width, height } = dimsToPixels(inputs.dimensions);
+  const ctx: RunContext = { config: stageConfig(stageId), inputs, width, height };
+  try {
+    const res = await provider.runVideo!(scene.imagePrompt, stills[scene.scene], ctx);
+    recordCreditUse(provider.id);
+    const videos = { ...(getState().runtime[stageId]?.videos || {}), [sceneNumber]: res.url };
+    setRuntime(stageId, { videos, ...clearSceneError(stageId, sceneNumber) });
+  } catch (err: any) {
+    const sceneErrors = { ...(getState().runtime[stageId]?.sceneErrors || {}), [sceneNumber]: err?.message || String(err) };
+    setRuntime(stageId, { sceneErrors });
+    throw err;
+  }
+}
+
+/** Redoes every currently-failed scene in one click. Scenes are retried one at
+ *  a time (not in parallel) so a shared rate limit or credit balance behaves
+ *  the same as it would during a normal run; one scene's continued failure
+ *  doesn't stop the rest from being attempted. */
+export async function retryFailedScenes(stageId: "images" | "video"): Promise<void> {
+  const failed = Object.keys(getState().runtime[stageId]?.sceneErrors || {}).map(Number);
+  for (const sceneNumber of failed) {
+    try {
+      if (stageId === "images") await retrySceneImage(sceneNumber);
+      else await retrySceneVideo(sceneNumber);
+    } catch {
+      /* that scene's error is already recorded by the retry function above — keep going for the rest */
+    }
+  }
 }
 
 /** Runs the creative pipeline end-to-end, stopping at the first failure. */
