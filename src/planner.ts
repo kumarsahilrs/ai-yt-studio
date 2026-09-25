@@ -12,7 +12,7 @@ import type { RunContext } from "./types";
 // brain" — no separate provider-selection UI needed for this.
 // ---------------------------------------------------------------------------
 
-function newId(prefix: string): string {
+export function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 

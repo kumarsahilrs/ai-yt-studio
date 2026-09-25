@@ -7,6 +7,9 @@ import { InputsBar } from "./components/InputsBar";
 import { StagePanel } from "./components/StagePanel";
 import { Settings } from "./components/Settings";
 import { Projects } from "./components/Projects";
+import { ContentCalendar } from "./components/calendar/ContentCalendar";
+
+const NON_STAGE_VIEWS = new Set(["settings", "projects", "calendar"]);
 
 export function App() {
   const view = useStore((s) => s.view);
@@ -42,8 +45,16 @@ export function App() {
     <div className="app">
       <Sidebar running={running} onRunAll={onRunAll} onStopAll={onStopAll} />
       <main className="main">
-        {view !== "settings" && view !== "projects" && <InputsBar />}
-        {view === "settings" ? <Settings /> : view === "projects" ? <Projects /> : <StagePanel stageId={view} />}
+        {!NON_STAGE_VIEWS.has(view) && <InputsBar />}
+        {view === "settings" ? (
+          <Settings />
+        ) : view === "projects" ? (
+          <Projects />
+        ) : view === "calendar" ? (
+          <ContentCalendar />
+        ) : (
+          <StagePanel stageId={view} />
+        )}
       </main>
     </div>
   );
