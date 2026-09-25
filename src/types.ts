@@ -76,13 +76,29 @@ export interface Provider {
 
 export type AspectRatio = "16:9" | "9:16" | "1:1";
 
+/** Where the creator means to publish this video — drives the Publish &
+ *  Metadata stage (one generated block per selected platform) and, lightly,
+ *  the Research/Scriptwriter prompts (pacing/hook style differs by platform). */
+export type Platform = "youtube" | "youtube-shorts" | "instagram-reels" | "tiktok";
+
 export interface ProjectInputs {
   topic: string;
   dimensions: AspectRatio;
   duration: string; // e.g. "60s", "3 min"
   audienceType: string; // e.g. "Beginners", "Investors"
   ageGroup: string; // e.g. "18-24"
+  /** Empty = unspecified/general; the Publish stage needs at least one selected to run. */
+  platforms: Platform[];
 }
+
+/** One platform's generated upload metadata. */
+export interface PublishBlock {
+  titles: string[];
+  description: string;
+  tags: string[];
+  notes: string;
+}
+export type PublishPlan = Partial<Record<Platform, PublishBlock>>;
 
 export interface Scene {
   scene: number;
@@ -140,6 +156,8 @@ export interface StageRuntimeState {
   text?: string;
   /** Visual Director parsed scenes. */
   scenes?: Scene[];
+  /** Publish & Metadata parsed output, one block per selected platform. */
+  publishPlan?: PublishPlan;
   /** Image URLs indexed by scene number. */
   images?: Record<number, string>;
   /** Video clip URLs indexed by scene number. */

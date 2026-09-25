@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { STAGES, isRemoteImageUrl } from "../stages";
+import { STAGES, isRemoteImageUrl, PLATFORMS } from "../stages";
 import { providersFor, getProvider, TIER_LABEL } from "../providers";
 import {
   useStore,
@@ -15,8 +15,8 @@ import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
 import { ReferencesPanel } from "./ReferencesPanel";
-import { IconPlay, IconStop, IconExternal, IconDownload, IconRefresh } from "../icons";
-import type { Scene } from "../types";
+import { IconPlay, IconStop, IconExternal, IconDownload, IconRefresh, IconCopy, IconCheck } from "../icons";
+import type { Scene, Platform, PublishPlan, PublishBlock } from "../types";
 
 /** Generative stages, in pipeline order — used for the Storyboard/Assemble
  *  stage's "what's out of date" summary. */
@@ -206,12 +206,16 @@ export function StagePanel({ stageId }: { stageId: string }) {
         )}
         {rt.error && <div className="error-box">{rt.error}</div>}
 
-        {stage.kind === "llm" && stage.id !== "visuals" && (
+        {stage.kind === "llm" && stage.id !== "visuals" && stage.id !== "publish" && (
           <LlmOutput text={rt.text} running={running} />
         )}
 
         {stage.id === "visuals" && (
           <ScenesView scenes={rt.scenes} images={undefined} dimensions={dimensions} running={running} rawText={rt.text} />
+        )}
+
+        {stage.id === "publish" && (
+          <PublishOutput plan={rt.publishPlan} platforms={inputs.platforms || []} running={running} rawText={rt.text} />
         )}
 
         {stage.kind === "image" && (
@@ -250,6 +254,112 @@ function LlmOutput({ text, running }: { text?: string; running: boolean }) {
   if (!text && running) return <Loading label="Generating…" />;
   if (!text) return <div className="empty">No output yet. Click “Run this stage”.</div>;
   return <div className="output">{text}</div>;
+}
+
+function PublishOutput({
+  plan,
+  platforms,
+  running,
+  rawText,
+}: {
+  plan?: PublishPlan;
+  platforms: Platform[];
+  running: boolean;
+  rawText?: string;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  if (!plan && running) return <Loading label="Writing upload metadata…" />;
+  if (!plan) return <div className="empty">No output yet. Click “Run this stage”.</div>;
+  if (platforms.length === 0)
+    return <div className="empty">No publish targets selected — pick at least one up top, then rerun.</div>;
+
+  return (
+    <div>
+      {rawText && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          <button className="btn sm ghost" onClick={() => setShowRaw((v) => !v)}>
+            {showRaw ? "Hide" : "Show"} raw JSON
+          </button>
+        </div>
+      )}
+      {showRaw && rawText && <div className="output mono" style={{ marginBottom: 14 }}>{rawText}</div>}
+      <div className="publish-grid">
+        {platforms.map((id) => {
+          const label = PLATFORMS.find((p) => p.id === id)?.label ?? id;
+          const block = plan[id];
+          return (
+            <div className="card publish-card" key={id}>
+              <h3>{label}</h3>
+              {block ? <PublishBlockView block={block} /> : <div className="empty">Not generated — rerun this stage.</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PublishBlockView({ block }: { block: PublishBlock }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  function copy(text: string, which: string) {
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => {
+        setCopied(which);
+        setTimeout(() => setCopied((c) => (c === which ? null : c)), 1500);
+      })
+      .catch(() => {
+        /* clipboard permission denied — the text is still selectable/visible */
+      });
+  }
+  const CopyBtn = ({ text, id }: { text: string; id: string }) => (
+    <button className="btn sm ghost" onClick={() => copy(text, id)} title="Copy">
+      {copied === id ? <IconCheck size={12} /> : <IconCopy size={12} />}
+    </button>
+  );
+
+  return (
+    <div>
+      {block.titles.length > 0 && (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label>Title options</label>
+          {block.titles.map((t, i) => (
+            <div className="row" key={i} style={{ marginTop: 4, alignItems: "flex-start" }}>
+              <span className="output" style={{ flex: 1 }}>
+                {t}
+              </span>
+              <CopyBtn text={t} id={`title-${i}`} />
+            </div>
+          ))}
+        </div>
+      )}
+      {block.description && (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label>Description</label>
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <div className="output" style={{ flex: 1 }}>
+              {block.description}
+            </div>
+            <CopyBtn text={block.description} id="desc" />
+          </div>
+        </div>
+      )}
+      {block.tags.length > 0 && (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label>Tags</label>
+          <div className="row">
+            {block.tags.map((t) => (
+              <span className="pill" key={t}>
+                #{t}
+              </span>
+            ))}
+            <CopyBtn text={block.tags.map((t) => `#${t}`).join(" ")} id="tags" />
+          </div>
+        </div>
+      )}
+      {block.notes && <div className="notice sm">{block.notes}</div>}
+    </div>
+  );
 }
 
 function ScenesView({

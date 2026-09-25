@@ -1,5 +1,5 @@
 import { getProvider, providersFor } from "./providers";
-import { STAGES, fillTemplate, parseScenes, dimsToPixels } from "./stages";
+import { STAGES, fillTemplate, parseScenes, parsePublishPlan, dimsToPixels, PLATFORMS } from "./stages";
 import {
   getState,
   setRuntime,
@@ -19,12 +19,14 @@ import type { Provider, ProjectInputs, RunContext, StageKind } from "./types";
 const controllers: Record<string, AbortController> = {};
 
 function inputsSummary(inputs: ProjectInputs): string {
+  const platformLabels = (inputs.platforms || []).map((id) => PLATFORMS.find((p) => p.id === id)?.label ?? id);
   return (
     `Topic: ${inputs.topic}\n` +
     `Audience type: ${inputs.audienceType}\n` +
     `Age group: ${inputs.ageGroup}\n` +
     `Duration: ${inputs.duration}\n` +
-    `Aspect ratio: ${inputs.dimensions}`
+    `Aspect ratio: ${inputs.dimensions}\n` +
+    `Publish target(s): ${platformLabels.length ? platformLabels.join(", ") : "(not set)"}`
   );
 }
 
@@ -143,6 +145,14 @@ export async function runStage(stageId: string): Promise<void> {
         const script = state.runtime["script"]?.text;
         if (!script) throw new Error("Run the Scriptwriter stage first — the Visual Director needs a script.");
         user = script;
+      } else if (stageId === "publish") {
+        if (!(state.inputs.platforms || []).length) {
+          throw new Error("Pick at least one publish target up top (YouTube, Instagram Reels, ...) first.");
+        }
+        const script = state.runtime["script"]?.text;
+        if (!script) throw new Error("Run the Scriptwriter stage first — Publish & Metadata needs a script.");
+        const research = state.runtime["research"]?.text;
+        user = (research ? `Research / hook & outline:\n${research}\n\n` : "") + `Script:\n${script}`;
       } else {
         user = inputsSummary(state.inputs);
       }
@@ -151,6 +161,9 @@ export async function runStage(stageId: string): Promise<void> {
       if (stageId === "visuals") {
         const scenes = parseScenes(result.text);
         setRuntime(stageId, { text: result.text, scenes, usedProviderId: providerId });
+      } else if (stageId === "publish") {
+        const publishPlan = parsePublishPlan(result.text);
+        setRuntime(stageId, { text: result.text, publishPlan, usedProviderId: providerId });
       } else {
         setRuntime(stageId, { text: result.text, usedProviderId: providerId });
       }
@@ -245,7 +258,7 @@ export async function regenerateSceneImage(sceneNumber: number, providerId: stri
 
 /** Runs the creative pipeline end-to-end, stopping at the first failure. */
 export async function runAll(): Promise<void> {
-  const order = ["research", "script", "visuals", "images", "voiceover"];
+  const order = ["research", "script", "visuals", "images", "voiceover", "publish"];
   for (const id of order) {
     try {
       await runStage(id);

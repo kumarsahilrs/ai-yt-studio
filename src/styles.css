@@ -324,6 +324,34 @@ a:hover {
 .inputs-bar .f-age .input {
   width: 100px;
 }
+.inputs-bar .f-platforms {
+  flex-basis: 100%;
+}
+.platform-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.platform-chip {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.platform-chip:hover {
+  border-color: var(--border-2);
+  color: var(--text);
+}
+.platform-chip.active {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
 .input,
 .select,
 .textarea {
@@ -500,6 +528,15 @@ a:hover {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.publish-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+.publish-card {
+  margin-top: 0;
+  background: var(--panel-2);
 }
 .scene-thumb {
   aspect-ratio: 16 / 9;
