@@ -139,4 +139,9 @@ export interface StageRuntimeState {
   audioPlaybackOnly?: boolean;
   startedAt?: number;
   finishedAt?: number;
+  /** The provider that actually produced the last successful output — may differ
+   *  from the stage's wired provider when automatic fallback kicked in. */
+  usedProviderId?: string;
+  /** Human-readable notes of each fallback that happened during the run. */
+  fallbackLog?: string[];
 }

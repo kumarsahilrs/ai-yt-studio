@@ -47,7 +47,7 @@ export interface AppState {
   references: ReferenceItem[];
 }
 
-function defaultParamsFor(providerId: string): Record<string, string> {
+export function defaultParamsFor(providerId: string): Record<string, string> {
   const p = getProvider(providerId);
   const out: Record<string, string> = {};
   p?.params.forEach((f) => {
@@ -254,6 +254,25 @@ export function stageConfig(stageId: string): Record<string, string> {
   if (!w) return {};
   const secrets = state.secrets[w.providerId] || {};
   return { ...secrets, ...w.params };
+}
+
+/** Config for a specific provider when it runs as part of a stage: that provider's
+ *  own saved secrets, plus its wired params if it's the stage's selected provider
+ *  (preserves any edits, e.g. a custom model name) or its defaults otherwise —
+ *  used when a fallback provider steps in for the one the stage has wired up. */
+export function configForProvider(providerId: string, stageId: string): Record<string, string> {
+  const secrets = state.secrets[providerId] || {};
+  const w = state.wiring[stageId];
+  const params = w?.providerId === providerId ? w.params : defaultParamsFor(providerId);
+  return { ...secrets, ...params };
+}
+
+/** True if every secret a provider needs (e.g. an API key) has a non-empty value saved. */
+export function isProviderConfigured(providerId: string): boolean {
+  const provider = getProvider(providerId);
+  if (!provider || provider.secrets.length === 0) return true;
+  const secrets = state.secrets[providerId] || {};
+  return provider.secrets.every((f) => (secrets[f.key] || "").trim().length > 0);
 }
 
 // --- Creative Brief: reference links ----------------------------------------

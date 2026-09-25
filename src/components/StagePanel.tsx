@@ -99,6 +99,11 @@ export function StagePanel({ stageId }: { stageId: string }) {
               )}
             </div>
           )}
+          {stage.kind !== "video" && (
+            <div className="hint" style={{ display: "block", marginTop: 8 }}>
+              If this fails, the next configured free → paid provider for this stage is tried automatically.
+            </div>
+          )}
 
           {stage.kind === "llm" && (
             <div className="field" style={{ marginTop: 16 }}>
@@ -117,6 +122,22 @@ export function StagePanel({ stageId }: { stageId: string }) {
       {/* --- output card --- */}
       <div className="card">
         <h3>Output</h3>
+        {rt.usedProviderId && wiring && rt.usedProviderId !== wiring.providerId && (
+          <div className="notice" style={{ marginBottom: 12 }}>
+            ⚡ Auto-switched to <b>{getProvider(rt.usedProviderId)?.name ?? rt.usedProviderId}</b> — the selected
+            provider failed. See details below.
+          </div>
+        )}
+        {rt.fallbackLog && rt.fallbackLog.length > 0 && (
+          <details style={{ marginBottom: 12 }}>
+            <summary className="hint" style={{ cursor: "pointer" }}>
+              Fallback details ({rt.fallbackLog.length})
+            </summary>
+            <div className="output mono" style={{ marginTop: 8 }}>
+              {rt.fallbackLog.join("\n")}
+            </div>
+          </details>
+        )}
         {rt.error && <div className="error-box">{rt.error}</div>}
 
         {stage.kind === "llm" && stage.id !== "visuals" && (
