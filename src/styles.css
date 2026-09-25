@@ -672,6 +672,12 @@ a:hover {
   padding: 12px 14px;
   line-height: 1.55;
 }
+.notice.sm {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  border-color: rgba(245, 183, 78, 0.4);
+  color: var(--amber);
+}
 .player {
   background: #000;
   border-radius: 12px;

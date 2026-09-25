@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { STAGES } from "../stages";
+import { STAGES, isRemoteImageUrl } from "../stages";
 import { providersFor, getProvider, TIER_LABEL } from "../providers";
 import {
   useStore,
@@ -8,7 +8,7 @@ import {
   setStagePrompt,
   remainingCredits,
 } from "../store";
-import { runStage, cancelStage } from "../engine";
+import { runStage, cancelStage, regenerateSceneImage } from "../engine";
 import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
@@ -24,6 +24,7 @@ export function StagePanel({ stageId }: { stageId: string }) {
   // Scenes always come from the Visual Director stage; read unconditionally so
   // hook order stays stable when navigating between stages.
   const visualsScenes = useStore((s) => s.runtime["visuals"]?.scenes);
+  const stills = useStore((s) => s.runtime["images"]?.images);
   // Re-render when credit usage changes; only relevant for the video stage.
   useStore((s) => s.credits);
   const running = rt.status === "running";
@@ -182,6 +183,7 @@ export function StagePanel({ stageId }: { stageId: string }) {
             dimensions={dimensions}
             running={running}
             rawText={undefined}
+            onFixScene={(n) => regenerateSceneImage(n, "pollinations")}
           />
         )}
 
@@ -189,6 +191,7 @@ export function StagePanel({ stageId }: { stageId: string }) {
           <ScenesView
             scenes={visualsScenes}
             videos={rt.videos || {}}
+            stills={stills}
             dimensions={dimensions}
             running={running}
             rawText={undefined}
@@ -215,20 +218,30 @@ function ScenesView({
   scenes,
   images,
   videos,
+  stills,
   dimensions,
   running,
   rawText,
+  onFixScene,
 }: {
   scenes?: Scene[];
   images?: Record<number, string>;
   videos?: Record<number, string>;
+  /** Only passed for the video stage: the stills from Image Generation, so a
+   *  scene backed by a non-animatable local image can be flagged here too. */
+  stills?: Record<number, string>;
   dimensions: string;
   running: boolean;
   rawText?: string;
+  /** Only passed for the image stage: regenerates one scene's image with a
+   *  specific (always-public) provider, e.g. to fix a non-animatable blob URL. */
+  onFixScene?: (sceneNumber: number) => Promise<void>;
 }) {
   const [showRaw, setShowRaw] = useState(false);
+  const [fixing, setFixing] = useState<number | null>(null);
   const videoMode = !!videos;
   const mediaMode = videoMode || !!images;
+  const stillsForCheck = images ?? stills;
   if ((!scenes || scenes.length === 0) && running) return <Loading label="Working…" />;
   if (!scenes || scenes.length === 0)
     return <div className="empty">No scenes yet. Run the Visual Director to break the script into scenes.</div>;
@@ -252,6 +265,9 @@ function ScenesView({
           const img = images?.[sc.scene];
           const vid = videos?.[sc.scene];
           const media = videoMode ? vid : img;
+          const still = stillsForCheck?.[sc.scene];
+          const notAnimatable = !!still && !isRemoteImageUrl(still);
+          const isFixing = fixing === sc.scene;
           return (
             <div className="scene-card" key={sc.scene}>
               {mediaMode && (
@@ -280,6 +296,34 @@ function ScenesView({
                   <a className="link-ext" href={media} target="_blank" rel="noreferrer" style={{ marginTop: 6 }}>
                     Open {videoMode ? "clip" : "image"} <IconExternal size={12} />
                   </a>
+                )}
+                {notAnimatable && (
+                  <div className="notice sm" style={{ marginTop: 8 }}>
+                    ⚠ Local image — most video providers (Runway, MiniMax I2V, fal/Luma image mode) can't animate it.
+                    {onFixScene ? (
+                      <>
+                        {" "}
+                        <button
+                          className="btn sm ghost"
+                          disabled={isFixing}
+                          onClick={async () => {
+                            setFixing(sc.scene);
+                            try {
+                              await onFixScene(sc.scene);
+                            } catch {
+                              /* the scene keeps its old image; nothing else to do here */
+                            } finally {
+                              setFixing(null);
+                            }
+                          }}
+                        >
+                          {isFixing ? "Fixing…" : "Fix: regenerate via Pollinations"}
+                        </button>
+                      </>
+                    ) : (
+                      " Fix it from Image Generation."
+                    )}
+                  </div>
                 )}
               </div>
             </div>

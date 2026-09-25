@@ -224,6 +224,24 @@ export async function runStage(stageId: string): Promise<void> {
   }
 }
 
+/** Re-renders one scene's image with a specific provider — used to fix a scene
+ *  whose current image is a local blob/data URL (from Hugging Face/Together)
+ *  that the video providers can't reach, by swapping in a public one
+ *  (Pollinations) without having to rerun the whole Image Generation stage. */
+export async function regenerateSceneImage(sceneNumber: number, providerId: string): Promise<void> {
+  const stageId = "images";
+  const scene = getState().runtime["visuals"]?.scenes?.find((s) => s.scene === sceneNumber);
+  if (!scene) throw new Error(`Scene ${sceneNumber} not found.`);
+  const provider = getProvider(providerId);
+  if (!provider?.runImage) throw new Error(`Provider "${providerId}" can't generate images.`);
+  const { inputs } = getState();
+  const { width, height } = dimsToPixels(inputs.dimensions);
+  const ctx: RunContext = { config: configForProvider(providerId, stageId), inputs, width, height };
+  const res = await provider.runImage(scene.imagePrompt, ctx);
+  const images = { ...(getState().runtime[stageId]?.images || {}), [sceneNumber]: res.url };
+  setRuntime(stageId, { images });
+}
+
 /** Runs the creative pipeline end-to-end, stopping at the first failure. */
 export async function runAll(): Promise<void> {
   const order = ["research", "script", "visuals", "images", "voiceover"];
