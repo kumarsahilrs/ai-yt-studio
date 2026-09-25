@@ -68,7 +68,11 @@ function fallbackCandidates(kind: StageKind, preferredId: string): Provider[] {
   return preferred ? [preferred, ...rest] : rest;
 }
 
-async function withFallback<T>(
+/** Exported for planner.ts: the Content Calendar's brief analysis and
+ *  auto-scheduler reuse the Research stage's wired provider (and its
+ *  fallback chain) as their "planning brain" rather than needing a
+ *  separate provider-selection UI. */
+export async function withFallback<T>(
   stageId: string,
   kind: StageKind,
   run: (provider: Provider, ctx: RunContext) => Promise<T>,
