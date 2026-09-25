@@ -389,6 +389,44 @@ a:hover {
 .wire-row .field {
   min-width: 180px;
 }
+.wire-row .field.grow {
+  flex: 1;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ref-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.ref-main {
+  min-width: 0;
+  flex: 1;
+}
+.ref-main .t {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ref-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.spinner.sm {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+}
 
 .badge {
   font-size: 10px;

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type {
   AspectRatio,
   ProjectInputs,
+  ReferenceItem,
   StageRuntimeState,
   StageWiring,
 } from "./types";
@@ -42,6 +43,8 @@ export interface AppState {
   runtime: Record<string, StageRuntimeState>;
   /** which stage panel is open, or "settings" */
   view: string;
+  /** Creative Brief: reference links (YouTube videos/channels, web pages) fed to Research & Hook. */
+  references: ReferenceItem[];
 }
 
 function defaultParamsFor(providerId: string): Record<string, string> {
@@ -80,6 +83,7 @@ function buildDefaults(): AppState {
     wiring,
     runtime,
     view: STAGES[0].id,
+    references: [],
   };
 }
 
@@ -97,6 +101,7 @@ function hydrate(): AppState {
       wiring: mergeWiring(base.wiring, saved.wiring),
       runtime: mergeRuntime(base.runtime, saved.runtime),
       view: base.view,
+      references: mergeReferences(saved.references),
     };
   } catch {
     return base;
@@ -134,6 +139,15 @@ function mergeRuntime(
   return out;
 }
 
+/** Reference content is plain text (no blob URLs), so it's safe to persist as-is —
+ *  except a run interrupted mid-fetch by a reload, which comes back as an error. */
+function mergeReferences(saved: ReferenceItem[] | undefined): ReferenceItem[] {
+  if (!Array.isArray(saved)) return [];
+  return saved.map((r) =>
+    r.status === "loading" ? { ...r, status: "error", error: "Interrupted by a page reload. Click retry." } : r,
+  );
+}
+
 function persist(state: AppState) {
   try {
     const runtimeToSave: Record<string, any> = {};
@@ -147,6 +161,7 @@ function persist(state: AppState) {
         secrets: state.secrets,
         wiring: state.wiring,
         runtime: runtimeToSave,
+        references: state.references,
       }),
     );
   } catch {
@@ -239,6 +254,64 @@ export function stageConfig(stageId: string): Record<string, string> {
   if (!w) return {};
   const secrets = state.secrets[w.providerId] || {};
   return { ...secrets, ...w.params };
+}
+
+// --- Creative Brief: reference links ----------------------------------------
+
+const REFERENCE_ENDPOINT = "/render/reference";
+
+function newReferenceId(): string {
+  return `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function fetchReference(id: string, url: string): Promise<void> {
+  try {
+    const res = await fetch(REFERENCE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+    setState((s) => ({
+      references: s.references.map((r) =>
+        r.id === id
+          ? { ...r, status: "done", kind: body.kind, title: body.title, author: body.author, content: body.content }
+          : r,
+      ),
+    }));
+  } catch (err) {
+    const message =
+      err instanceof TypeError
+        ? "Couldn't reach the render backend. Start it (cd backend && uvicorn main:app --port 8000) — see README."
+        : (err as Error).message;
+    setState((s) => ({
+      references: s.references.map((r) => (r.id === id ? { ...r, status: "error", error: message } : r)),
+    }));
+  }
+}
+
+/** Adds a reference link and kicks off reading it in the background. */
+export function addReference(rawUrl: string) {
+  const url = rawUrl.trim();
+  if (!url) return;
+  if (state.references.some((r) => r.url === url)) return; // already added
+  const id = newReferenceId();
+  setState((s) => ({ references: [...s.references, { id, url, status: "loading" }] }));
+  void fetchReference(id, url);
+}
+
+export function removeReference(id: string) {
+  setState((s) => ({ references: s.references.filter((r) => r.id !== id) }));
+}
+
+export function retryReference(id: string) {
+  const ref = state.references.find((r) => r.id === id);
+  if (!ref) return;
+  setState((s) => ({
+    references: s.references.map((r) => (r.id === id ? { ...r, status: "loading", error: undefined } : r)),
+  }));
+  void fetchReference(id, ref.url);
 }
 
 // --- API keys file ---------------------------------------------------------

@@ -11,6 +11,7 @@ import { runStage, cancelStage } from "../engine";
 import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
+import { ReferencesPanel } from "./ReferencesPanel";
 import { IconPlay, IconStop, IconExternal, IconDownload } from "../icons";
 import type { Scene } from "../types";
 
@@ -49,6 +50,8 @@ export function StagePanel({ stageId }: { stageId: string }) {
           </div>
         )}
       </div>
+
+      {stageId === "research" && <ReferencesPanel />}
 
       {/* --- wiring card --- */}
       {!isAssemble && wiring && (

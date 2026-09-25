@@ -19,6 +19,18 @@ function inputsSummary(inputs: ProjectInputs): string {
   );
 }
 
+/** Successfully-read Creative Brief links, formatted as competitor context for Research & Hook. */
+function referencesBlock(): string {
+  const done = getState().references.filter((r) => r.status === "done" && r.content);
+  if (done.length === 0) return "";
+  const blocks = done.map((r, i) => `[Reference ${i + 1} — ${r.url}]\n${r.content}`);
+  return (
+    `\n\nCreative Brief — reference material pasted by the creator (competitor videos/channels/pages).\n` +
+    `Use this to ground the hooks and outline in what's actually working, don't just summarize it:\n\n` +
+    blocks.join("\n\n---\n\n")
+  );
+}
+
 export function cancelStage(stageId: string) {
   controllers[stageId]?.abort();
 }
@@ -51,7 +63,7 @@ export async function runStage(stageId: string): Promise<void> {
       const system = fillTemplate(wiring.systemPrompt || stage.defaultSystemPrompt || "", state.inputs);
       let user: string;
       if (stageId === "research") {
-        user = inputsSummary(state.inputs);
+        user = inputsSummary(state.inputs) + referencesBlock();
       } else if (stageId === "script") {
         user = state.runtime["research"]?.text || inputsSummary(state.inputs);
       } else if (stageId === "visuals") {

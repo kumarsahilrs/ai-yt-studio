@@ -92,6 +92,19 @@ export interface Scene {
   imagePrompt: string;
 }
 
+/** A YouTube video/channel or web page link, read into text by the Phase-2
+ *  backend and fed to the Research & Hook agent as competitor context. */
+export interface ReferenceItem {
+  id: string;
+  url: string;
+  status: "loading" | "done" | "error";
+  kind?: "youtube-video" | "youtube-channel" | "web";
+  title?: string;
+  author?: string;
+  content?: string;
+  error?: string;
+}
+
 export type StageStatus = "idle" | "running" | "done" | "error";
 
 export interface StageDef {

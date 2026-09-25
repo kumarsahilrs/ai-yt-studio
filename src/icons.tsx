@@ -47,3 +47,10 @@ export const IconStop = svg(<rect x="6" y="6" width="12" height="12" rx="1" />);
 export const IconVideo = svg(
   <><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></>,
 );
+export const IconClose = svg(<><path d="M18 6 6 18" /><path d="M6 6l12 12" /></>);
+export const IconRefresh = svg(
+  <><path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" /></>,
+);
+export const IconLink = svg(
+  <><path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><path d="M8 12h8" /></>,
+);
