@@ -84,6 +84,7 @@ function buildDefaults(): AppState {
       duration: "60s",
       audienceType: "General",
       ageGroup: "18-34",
+      platforms: ["youtube"],
     },
     secrets: {},
     keys: { mode: "loading", savedSnapshot: "{}" },
@@ -462,6 +463,8 @@ function upstreamFingerprint(stageId: string, s: AppState): unknown {
       return { scenes: runtime.visuals?.scenes?.map((sc) => sc.imagePrompt), stills: runtime.images?.images };
     case "voiceover":
       return { script: runtime.script?.text };
+    case "publish":
+      return { research: runtime.research?.text, script: runtime.script?.text, platforms: inputs.platforms };
     default:
       return undefined;
   }

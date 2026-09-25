@@ -13,6 +13,8 @@ import {
   IconBolt,
   IconStop,
   IconFolder,
+  IconSend,
+  IconCalendar,
 } from "../icons";
 import type { StageStatus } from "../types";
 
@@ -24,6 +26,7 @@ const STAGE_ICON: Record<string, (p: any) => JSX.Element> = {
   video: IconVideo,
   voiceover: IconMic,
   assemble: IconLayers,
+  publish: IconSend,
 };
 
 export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; onRunAll: () => void; onStopAll: () => void }) {
@@ -95,6 +98,15 @@ export function Sidebar({ running, onRunAll, onStopAll }: { running: boolean; on
             <IconBolt size={15} /> <span className="btn-label">Run full pipeline</span>
           </button>
         )}
+        <button
+          className={"btn ghost full" + (view === "calendar" ? " active" : "")}
+          style={{ marginTop: 8 }}
+          onClick={() => setView("calendar")}
+          title="Content Calendar"
+          aria-label="Content Calendar"
+        >
+          <IconCalendar size={15} /> <span className="btn-label">Content Calendar</span>
+        </button>
         <button
           className={"btn ghost full" + (view === "projects" ? " active" : "")}
           style={{ marginTop: 8 }}

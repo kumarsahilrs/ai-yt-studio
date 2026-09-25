@@ -1,4 +1,14 @@
-import type { StageDef, ProjectInputs } from "./types";
+import type { StageDef, ProjectInputs, Platform, PublishPlan } from "./types";
+
+/** Publish targets the creator can select — drives the Publish & Metadata
+ *  stage (one generated block per platform picked) and lightly informs
+ *  Research/Scriptwriter (hook pacing differs by platform). */
+export const PLATFORMS: { id: Platform; label: string; note: string }[] = [
+  { id: "youtube", label: "YouTube (long-form)", note: "Searchable title + keyword-rich description matter most" },
+  { id: "youtube-shorts", label: "YouTube Shorts", note: "Vertical, hook in the first second, short punchy title" },
+  { id: "instagram-reels", label: "Instagram Reels", note: "Caption doubles as the hook; 3-5 targeted hashtags beat 30" },
+  { id: "tiktok", label: "TikTok", note: "On-screen text hook + a handful of niche + broad hashtags" },
+];
 
 // ---------------------------------------------------------------------------
 // Pipeline definition. Each stage has a kind (which decides the provider menu)
@@ -95,7 +105,34 @@ export const STAGES: StageDef[] = [
     description:
       "Plays your scenes as a storyboard synced to the voiceover, and exports a real .mp4 (images + Edge-TTS narration + captions) when the Phase-2 render backend is running.",
   },
+  {
+    id: "publish",
+    title: "Publish & Metadata",
+    kind: "llm",
+    short: "Titles, descriptions, tags",
+    description:
+      "Writes the upload-ready context for each platform you selected up top — title options, description, tags/hashtags, and what to do differently there — so you can paste it straight into YouTube Studio, Instagram, or TikTok.",
+    defaultSystemPrompt:
+      `You are a social media growth strategist optimizing a video for maximum reach.\n` +
+      `Using the script and hook/outline the user provides, write upload metadata for EACH platform listed below. Tailor tone, title length, and hashtag count to that platform's norms — don't reuse the same title/description verbatim across platforms.\n\n` +
+      `Platforms to cover: {{platforms}}\n\n` +
+      `Return ONLY a JSON object (no prose, no code fences), keyed by platform id exactly as given (e.g. "youtube", "youtube-shorts", "instagram-reels", "tiktok"). Each value:\n` +
+      `{\n` +
+      `  "titles": [<3-5 title options, strongest first, each under the platform's effective limit>],\n` +
+      `  "description": "<ready-to-paste description; front-load keywords/hook in the first line; include a call-to-action>",\n` +
+      `  "tags": [<platform-appropriate hashtags/keywords WITHOUT the # symbol, right quantity for that platform>],\n` +
+      `  "notes": "<1-2 sentences: what to do specifically on THIS platform for reach — posting angle, thumbnail idea, best-practice reminder>"\n` +
+      `}\n\n` +
+      `Topic: {{topic}}\nAudience type: {{audienceType}}\nAge group: {{ageGroup}}\nDuration: {{duration}}`,
+  },
 ];
+
+/** e.g. ["youtube", "tiktok"] -> "youtube (id: \"youtube\"), tiktok (id: \"tiktok\")" — human labels
+ *  for the prompt's prose, with the exact id it must use as the JSON key right next to it. */
+function platformsForPrompt(platforms: Platform[]): string {
+  if (platforms.length === 0) return "(none selected — ask the user to pick at least one platform above)";
+  return platforms.map((id) => `${PLATFORMS.find((p) => p.id === id)?.label ?? id} (id: "${id}")`).join(", ");
+}
 
 export function fillTemplate(template: string, inputs: ProjectInputs): string {
   return template
@@ -103,7 +140,8 @@ export function fillTemplate(template: string, inputs: ProjectInputs): string {
     .replaceAll("{{dimensions}}", inputs.dimensions)
     .replaceAll("{{duration}}", inputs.duration || "(duration)")
     .replaceAll("{{audienceType}}", inputs.audienceType || "(audience)")
-    .replaceAll("{{ageGroup}}", inputs.ageGroup || "(age group)");
+    .replaceAll("{{ageGroup}}", inputs.ageGroup || "(age group)")
+    .replaceAll("{{platforms}}", platformsForPrompt(inputs.platforms || []));
 }
 
 export function dimsToPixels(dimensions: string): { width: number; height: number } {
@@ -141,4 +179,31 @@ export function parseScenes(text: string): import("./types").Scene[] {
     onScreenText: String(s.onScreenText ?? s.on_screen_text ?? ""),
     imagePrompt: String(s.imagePrompt ?? s.image_prompt ?? ""),
   }));
+}
+
+const PLATFORM_IDS = new Set(PLATFORMS.map((p) => p.id));
+
+/** Robustly pull the { platformId: {...} } object out of the Publish & Metadata
+ *  stage's response. Any key that isn't a known platform id is dropped — the
+ *  model occasionally invents one, or echoes a label instead of the id. */
+export function parsePublishPlan(text: string): PublishPlan {
+  let t = text.trim();
+  t = t.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Could not find a JSON object in the model output.");
+  const obj = JSON.parse(t.slice(start, end + 1));
+  const plan: PublishPlan = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (!PLATFORM_IDS.has(key as Platform) || !value || typeof value !== "object") continue;
+    const v = value as any;
+    plan[key as Platform] = {
+      titles: Array.isArray(v.titles) ? v.titles.map(String) : [],
+      description: String(v.description ?? ""),
+      tags: Array.isArray(v.tags) ? v.tags.map(String) : [],
+      notes: String(v.notes ?? ""),
+    };
+  }
+  if (Object.keys(plan).length === 0) throw new Error("The model didn't return any recognized platform blocks.");
+  return plan;
 }

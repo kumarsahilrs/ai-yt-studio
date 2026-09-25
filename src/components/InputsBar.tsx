@@ -1,8 +1,16 @@
 import { useStore, setInputs } from "../store";
-import type { AspectRatio } from "../types";
+import { PLATFORMS } from "../stages";
+import type { AspectRatio, Platform } from "../types";
 
 export function InputsBar() {
   const inputs = useStore((s) => s.inputs);
+  const platforms = inputs.platforms || [];
+
+  function togglePlatform(id: Platform) {
+    const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id];
+    setInputs({ platforms: next });
+  }
+
   return (
     <div className="inputs-bar">
       <div className="field grow">
@@ -51,6 +59,22 @@ export function InputsBar() {
           value={inputs.ageGroup}
           onChange={(e) => setInputs({ ageGroup: e.target.value })}
         />
+      </div>
+      <div className="field f-platforms">
+        <label>Publish target(s)</label>
+        <div className="platform-row">
+          {PLATFORMS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={"platform-chip" + (platforms.includes(p.id) ? " active" : "")}
+              onClick={() => togglePlatform(p.id)}
+              title={p.note}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
