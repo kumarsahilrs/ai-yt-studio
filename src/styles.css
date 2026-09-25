@@ -719,6 +719,66 @@ a:hover {
   padding: 1px 7px;
   color: var(--text-dim);
 }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.cal-weekday {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+  padding-bottom: 4px;
+}
+.cal-cell {
+  min-height: 90px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cal-cell.out {
+  opacity: 0.35;
+}
+.cal-cell.today {
+  border-color: var(--accent-2);
+}
+.cal-daynum {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.cal-slot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 10.5px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cal-slot .dot {
+  flex: none;
+}
+.cal-slot:hover {
+  border-color: var(--border-2);
+}
+.cal-slot.active {
+  border-color: var(--accent-2);
+  background: rgba(124, 92, 255, 0.12);
+}
 .kind-tabs {
   display: flex;
   gap: 8px;
