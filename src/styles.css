@@ -588,6 +588,15 @@ a:hover {
   min-width: 220px;
   flex: 1;
 }
+.credit-tracker {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
 .save-bar {
   position: sticky;
   top: 10px;
@@ -726,6 +735,11 @@ a:hover {
   border: 1px solid var(--border);
   padding: 4px 10px;
   border-radius: 999px;
+}
+.pill.danger {
+  color: var(--red);
+  background: rgba(255, 84, 104, 0.1);
+  border-color: rgba(255, 84, 104, 0.35);
 }
 .check {
   display: inline-flex;

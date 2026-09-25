@@ -92,6 +92,16 @@ export interface Scene {
   imagePrompt: string;
 }
 
+/** Manual credit tracking for a (usually video) provider on limited trial
+ *  credits: the creator records what the provider gave them at signup, and
+ *  the app counts down as generations succeed. */
+export interface ProviderCredit {
+  /** Starting balance the creator was given (e.g. free trial credits). Undefined = untracked (treated as unlimited). */
+  limit?: number;
+  /** Consumed so far, auto-incremented on each successful generation. */
+  used: number;
+}
+
 /** A YouTube video/channel or web page link, read into text by the Phase-2
  *  backend and fed to the Research & Hook agent as competitor context. */
 export interface ReferenceItem {

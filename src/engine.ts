@@ -1,6 +1,14 @@
 import { getProvider, providersFor } from "./providers";
 import { STAGES, fillTemplate, parseScenes, dimsToPixels } from "./stages";
-import { getState, setRuntime, stageConfig, configForProvider, isProviderConfigured } from "./store";
+import {
+  getState,
+  setRuntime,
+  stageConfig,
+  configForProvider,
+  isProviderConfigured,
+  hasCreditsLeft,
+  recordCreditUse,
+} from "./store";
 import type { Provider, ProjectInputs, RunContext, StageKind } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -169,6 +177,12 @@ export async function runStage(stageId: string): Promise<void> {
       // isn't the right default — the creator picks explicitly per scene.
       const provider = getProvider(wiring?.providerId);
       if (!provider) throw new Error("No provider selected. Pick one in this stage's settings.");
+      if (!hasCreditsLeft(provider.id)) {
+        throw new Error(
+          `No credits left for ${provider.name} (per your usage tracking in Settings). Raise the limit or reset ` +
+            `usage there if you topped up, or pick another video provider for this stage.`,
+        );
+      }
       const scenes = getState().runtime["visuals"]?.scenes;
       if (!scenes || scenes.length === 0) {
         throw new Error("Run the Visual Director first — video generation needs scene prompts.");
@@ -177,7 +191,11 @@ export async function runStage(stageId: string): Promise<void> {
       const videos: Record<number, string> = { ...(getState().runtime[stageId]?.videos || {}) };
       for (const scene of scenes) {
         if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (!hasCreditsLeft(provider.id)) {
+          throw new Error(`Ran out of ${provider.name} credits after scene ${scene.scene - 1}. Remaining scenes were not attempted.`);
+        }
         const res = await provider.runVideo!(scene.imagePrompt, stills[scene.scene], ctx);
+        recordCreditUse(provider.id);
         videos[scene.scene] = res.url;
         setRuntime(stageId, { videos: { ...videos } });
       }

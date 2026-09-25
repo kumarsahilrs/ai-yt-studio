@@ -6,6 +6,7 @@ import {
   setStageProvider,
   setStageParam,
   setStagePrompt,
+  remainingCredits,
 } from "../store";
 import { runStage, cancelStage } from "../engine";
 import { FieldEditor } from "./FieldEditor";
@@ -23,11 +24,16 @@ export function StagePanel({ stageId }: { stageId: string }) {
   // Scenes always come from the Visual Director stage; read unconditionally so
   // hook order stays stable when navigating between stages.
   const visualsScenes = useStore((s) => s.runtime["visuals"]?.scenes);
+  // Re-render when credit usage changes; only relevant for the video stage.
+  useStore((s) => s.credits);
   const running = rt.status === "running";
 
   const isAssemble = stage.kind === "assemble";
   const options = isAssemble ? [] : providersFor(stage.kind);
   const provider = wiring ? getProvider(wiring.providerId) : undefined;
+  const isVideo = stage.kind === "video";
+  const wiredRemaining = isVideo && wiring ? remainingCredits(wiring.providerId) : undefined;
+  const wiredOutOfCredits = wiredRemaining === 0;
 
   return (
     <div className="panel-wrap">
@@ -43,7 +49,12 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 <IconStop size={15} /> Stop
               </button>
             ) : (
-              <button className="btn primary" onClick={() => runStage(stageId)}>
+              <button
+                className="btn primary"
+                onClick={() => runStage(stageId)}
+                disabled={wiredOutOfCredits}
+                title={wiredOutOfCredits ? "No credits left for this provider — see Settings or pick another." : undefined}
+              >
                 <IconPlay size={15} /> Run this stage
               </button>
             )}
@@ -65,12 +76,17 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 value={wiring.providerId}
                 onChange={(e) => setStageProvider(stageId, e.target.value)}
               >
-                {options.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    [{TIER_LABEL[p.tier]}] {p.name}
-                    {p.note ? ` — ${p.note}` : ""}
-                  </option>
-                ))}
+                {options.map((p) => {
+                  const remaining = isVideo ? remainingCredits(p.id) : undefined;
+                  const outOfCredits = remaining === 0;
+                  return (
+                    <option key={p.id} value={p.id} disabled={outOfCredits}>
+                      [{TIER_LABEL[p.tier]}] {p.name}
+                      {p.note ? ` — ${p.note}` : ""}
+                      {remaining !== undefined ? (outOfCredits ? " — no credits left" : ` — ${remaining} credit${remaining === 1 ? "" : "s"} left`) : ""}
+                    </option>
+                  );
+                })}
               </select>
             </div>
             {provider?.params.map((f) => (
@@ -92,6 +108,11 @@ export function StagePanel({ stageId }: { stageId: string }) {
                 <span className="pill">Key set in Settings › API Keys</span>
               )}
               {provider.needsBackend && <span className="pill">⚠ Needs Phase-2 backend</span>}
+              {isVideo && wiredRemaining !== undefined && (
+                <span className={"pill" + (wiredOutOfCredits ? " danger" : "")}>
+                  {wiredOutOfCredits ? "No credits left" : `${wiredRemaining} credit${wiredRemaining === 1 ? "" : "s"} left`}
+                </span>
+              )}
               {provider.signupUrl && (
                 <a className="link-ext" href={provider.signupUrl} target="_blank" rel="noreferrer">
                   Get API key <IconExternal size={12} />
@@ -102,6 +123,12 @@ export function StagePanel({ stageId }: { stageId: string }) {
           {stage.kind !== "video" && (
             <div className="hint" style={{ display: "block", marginTop: 8 }}>
               If this fails, the next configured free → paid provider for this stage is tried automatically.
+            </div>
+          )}
+          {isVideo && (
+            <div className="hint" style={{ display: "block", marginTop: 8 }}>
+              Track each provider's trial credits in <b>Settings &amp; API keys</b> to get a warning here before you
+              run out.
             </div>
           )}
 

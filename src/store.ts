@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type {
   AspectRatio,
   ProjectInputs,
+  ProviderCredit,
   ReferenceItem,
   StageRuntimeState,
   StageWiring,
@@ -45,6 +46,8 @@ export interface AppState {
   view: string;
   /** Creative Brief: reference links (YouTube videos/channels, web pages) fed to Research & Hook. */
   references: ReferenceItem[];
+  /** providerId -> manual credit tracking (mainly for video providers on limited trial credits). */
+  credits: Record<string, ProviderCredit>;
 }
 
 export function defaultParamsFor(providerId: string): Record<string, string> {
@@ -84,6 +87,7 @@ function buildDefaults(): AppState {
     runtime,
     view: STAGES[0].id,
     references: [],
+    credits: {},
   };
 }
 
@@ -102,6 +106,7 @@ function hydrate(): AppState {
       runtime: mergeRuntime(base.runtime, saved.runtime),
       view: base.view,
       references: mergeReferences(saved.references),
+      credits: saved.credits && typeof saved.credits === "object" ? saved.credits : {},
     };
   } catch {
     return base;
@@ -162,6 +167,7 @@ function persist(state: AppState) {
         wiring: state.wiring,
         runtime: runtimeToSave,
         references: state.references,
+        credits: state.credits,
       }),
     );
   } catch {
@@ -331,6 +337,44 @@ export function retryReference(id: string) {
     references: s.references.map((r) => (r.id === id ? { ...r, status: "loading", error: undefined } : r)),
   }));
   void fetchReference(id, ref.url);
+}
+
+// --- Credit tracking (mainly video providers on limited trial credits) -----
+
+/** Sets (or clears, with undefined) the creator's known starting credit balance for a provider. */
+export function setCreditLimit(providerId: string, limit: number | undefined) {
+  setState((s) => ({
+    credits: { ...s.credits, [providerId]: { used: s.credits[providerId]?.used ?? 0, limit } },
+  }));
+}
+
+/** Called after each successful generation to count down the balance. */
+export function recordCreditUse(providerId: string, amount = 1) {
+  setState((s) => ({
+    credits: {
+      ...s.credits,
+      [providerId]: { limit: s.credits[providerId]?.limit, used: (s.credits[providerId]?.used ?? 0) + amount },
+    },
+  }));
+}
+
+/** Zeroes usage without forgetting the limit — e.g. a new billing cycle, or the account was topped up. */
+export function resetCreditUsage(providerId: string) {
+  setState((s) => ({
+    credits: { ...s.credits, [providerId]: { limit: s.credits[providerId]?.limit, used: 0 } },
+  }));
+}
+
+/** undefined = untracked (no known limit, treated as unlimited). */
+export function remainingCredits(providerId: string, s: AppState = state): number | undefined {
+  const c = s.credits[providerId];
+  if (!c || c.limit === undefined) return undefined;
+  return Math.max(0, c.limit - c.used);
+}
+
+export function hasCreditsLeft(providerId: string, s: AppState = state): boolean {
+  const remaining = remainingCredits(providerId, s);
+  return remaining === undefined || remaining > 0;
 }
 
 // --- API keys file ---------------------------------------------------------
