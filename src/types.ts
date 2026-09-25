@@ -154,4 +154,8 @@ export interface StageRuntimeState {
   usedProviderId?: string;
   /** Human-readable notes of each fallback that happened during the run. */
   fallbackLog?: string[];
+  /** A fingerprint of everything this output was generated from (its own wiring
+   *  plus its upstream stages' content) — compared against the same fingerprint
+   *  computed from current state to flag the output as stale/out-of-sync. */
+  sourceFingerprint?: string;
 }

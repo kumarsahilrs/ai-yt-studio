@@ -8,6 +8,7 @@ import {
   isProviderConfigured,
   hasCreditsLeft,
   recordCreditUse,
+  stageFingerprint,
 } from "./store";
 import type { Provider, ProjectInputs, RunContext, StageKind } from "./types";
 
@@ -211,7 +212,7 @@ export async function runStage(stageId: string): Promise<void> {
       });
     }
 
-    setRuntime(stageId, { status: "done", finishedAt: Date.now() });
+    setRuntime(stageId, { status: "done", finishedAt: Date.now(), sourceFingerprint: stageFingerprint(stageId, state) });
   } catch (err: any) {
     if (err?.name === "AbortError") {
       setRuntime(stageId, { status: "idle", error: undefined });

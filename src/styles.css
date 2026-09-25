@@ -192,6 +192,10 @@ a:hover {
 .dot.error {
   background: var(--red);
 }
+.dot.stale {
+  background: var(--amber);
+  box-shadow: 0 0 0 2px rgba(245, 183, 78, 0.25);
+}
 @keyframes pulse {
   0%,
   100% {
@@ -767,6 +771,18 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+/* A <button> styled to read as an inline link (for actions, not navigation) — pairs with .link-ext for layout. */
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+  color: var(--accent-2);
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 /* ---------- responsive ---------- */

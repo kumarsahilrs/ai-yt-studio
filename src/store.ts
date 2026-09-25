@@ -428,6 +428,62 @@ export function hasCreditsLeft(providerId: string, s: AppState = state): boolean
   return remaining === undefined || remaining > 0;
 }
 
+// --- Stage staleness (redo without silently leaving out-of-sync output) ----
+//
+// "Stale" means: this stage's shown output was generated from an older
+// version of something it depends on — its own wiring (provider/params/
+// prompt), or an upstream stage's content — and hasn't been rerun since. It's
+// informational only; nothing here blocks viewing/using a stale output, it
+// just stops a changed prompt or a rerun upstream stage from silently going
+// unnoticed downstream.
+
+/** Everything the given stage's PROMPT/INPUT actually depends on right now —
+ *  not its own previous output, so this never includes the stage's own
+ *  runtime.text/scenes/etc. */
+function upstreamFingerprint(stageId: string, s: AppState): unknown {
+  const { inputs, runtime } = s;
+  switch (stageId) {
+    case "research":
+      return {
+        inputs,
+        // Order-independent: which references are readable right now, not the order they were added in.
+        refs: s.references
+          .filter((r) => r.status === "done")
+          .map((r) => r.id)
+          .sort(),
+      };
+    case "script":
+      return { research: runtime.research?.text, inputs };
+    case "visuals":
+      return { script: runtime.script?.text, dimensions: inputs.dimensions };
+    case "images":
+      return { scenes: runtime.visuals?.scenes?.map((sc) => sc.imagePrompt), dimensions: inputs.dimensions };
+    case "video":
+      return { scenes: runtime.visuals?.scenes?.map((sc) => sc.imagePrompt), stills: runtime.images?.images };
+    case "voiceover":
+      return { script: runtime.script?.text };
+    default:
+      return undefined;
+  }
+}
+
+/** The full fingerprint: the stage's own wiring plus what it depends on upstream. */
+export function stageFingerprint(stageId: string, s: AppState = state): string {
+  const w = s.wiring[stageId];
+  return JSON.stringify({
+    own: w ? { providerId: w.providerId, params: w.params, systemPrompt: w.systemPrompt } : undefined,
+    upstream: upstreamFingerprint(stageId, s),
+  });
+}
+
+/** True once a stage has a completed output AND that output's fingerprint no
+ *  longer matches current state — its wiring or an upstream stage moved on. */
+export function isStageStale(stageId: string, s: AppState = state): boolean {
+  const rt = s.runtime[stageId];
+  if (!rt || rt.status !== "done" || rt.sourceFingerprint === undefined) return false;
+  return stageFingerprint(stageId, s) !== rt.sourceFingerprint;
+}
+
 // --- Full project save/load (IndexedDB) -------------------------------------
 
 export type { ProjectRecord };

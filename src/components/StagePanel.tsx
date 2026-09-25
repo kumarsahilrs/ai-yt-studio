@@ -7,26 +7,37 @@ import {
   setStageParam,
   setStagePrompt,
   remainingCredits,
+  isStageStale,
+  setView,
 } from "../store";
 import { runStage, cancelStage, regenerateSceneImage } from "../engine";
 import { FieldEditor } from "./FieldEditor";
 import { AssemblePlayer } from "./AssemblePlayer";
 import { RenderExport } from "./RenderExport";
 import { ReferencesPanel } from "./ReferencesPanel";
-import { IconPlay, IconStop, IconExternal, IconDownload } from "../icons";
+import { IconPlay, IconStop, IconExternal, IconDownload, IconRefresh } from "../icons";
 import type { Scene } from "../types";
+
+/** Generative stages, in pipeline order — used for the Storyboard/Assemble
+ *  stage's "what's out of date" summary. */
+const GENERATIVE_STAGE_IDS = ["research", "script", "visuals", "images", "video", "voiceover"];
 
 export function StagePanel({ stageId }: { stageId: string }) {
   const stage = STAGES.find((s) => s.id === stageId)!;
   const wiring = useStore((s) => s.wiring[stageId]);
   const rt = useStore((s) => s.runtime[stageId]) || { status: "idle" };
-  const dimensions = useStore((s) => s.inputs.dimensions);
+  const inputs = useStore((s) => s.inputs);
+  const dimensions = inputs.dimensions;
   // Scenes always come from the Visual Director stage; read unconditionally so
   // hook order stays stable when navigating between stages.
   const visualsScenes = useStore((s) => s.runtime["visuals"]?.scenes);
   const stills = useStore((s) => s.runtime["images"]?.images);
+  const runtime = useStore((s) => s.runtime);
   // Re-render when credit usage changes; only relevant for the video stage.
   useStore((s) => s.credits);
+  // isStageStale() also reads references (for the Research stage); subscribe
+  // so a change there is reflected without needing an unrelated re-render.
+  useStore((s) => s.references);
   const running = rt.status === "running";
 
   const isAssemble = stage.kind === "assemble";
@@ -35,6 +46,10 @@ export function StagePanel({ stageId }: { stageId: string }) {
   const isVideo = stage.kind === "video";
   const wiredRemaining = isVideo && wiring ? remainingCredits(wiring.providerId) : undefined;
   const wiredOutOfCredits = wiredRemaining === 0;
+  const stale = !isAssemble && rt.status === "done" && isStageStale(stageId);
+  const staleUpstream = isAssemble
+    ? GENERATIVE_STAGE_IDS.filter((id) => runtime[id]?.status === "done" && isStageStale(id))
+    : [];
 
   return (
     <div className="panel-wrap">
@@ -150,6 +165,29 @@ export function StagePanel({ stageId }: { stageId: string }) {
       {/* --- output card --- */}
       <div className="card">
         <h3>Output</h3>
+        {stale && (
+          <div className="notice sm" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ flex: 1 }}>
+              ⟳ Out of date — the wiring or an earlier stage changed since this was generated. Rerun to refresh it.
+            </span>
+            <button className="btn sm ghost" onClick={() => runStage(stageId)} disabled={running}>
+              <IconRefresh size={12} /> Rerun
+            </button>
+          </div>
+        )}
+        {isAssemble && staleUpstream.length > 0 && (
+          <div className="notice sm" style={{ marginBottom: 12 }}>
+            ⟳ Out of date: {staleUpstream.map((id, i) => (
+              <span key={id}>
+                {i > 0 && ", "}
+                <button className="link-ext link-btn" style={{ display: "inline" }} onClick={() => setView(id)}>
+                  {STAGES.find((s) => s.id === id)?.title}
+                </button>
+              </span>
+            ))}{" "}
+            changed since a later stage was generated from it — the preview below may not reflect them.
+          </div>
+        )}
         {rt.usedProviderId && wiring && rt.usedProviderId !== wiring.providerId && (
           <div className="notice" style={{ marginBottom: 12 }}>
             ⚡ Auto-switched to <b>{getProvider(rt.usedProviderId)?.name ?? rt.usedProviderId}</b> — the selected
