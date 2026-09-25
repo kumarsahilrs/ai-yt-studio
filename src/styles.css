@@ -514,6 +514,11 @@ a:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.error-box.sm {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  margin-top: 0;
+}
 
 /* scenes + images */
 .scene-grid {
